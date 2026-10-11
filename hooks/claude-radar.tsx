@@ -14,8 +14,12 @@ export const initialState = (): ClaudeRadarState => ({
     isCollapsed: true
   },
   subagents: {},
+  history: [],
   tick: 0
 })
+
+/** A session that ended: everything the radar followed is gone; only the ON/OFF choice stays. */
+export const resetSession = (state: ClaudeRadarState): ClaudeRadarState => ({ ...initialState(), claudeRadarEnabled: state.claudeRadarEnabled })
 
 /** The label of the header's button. */
 export const buttonLabel = (enabled: boolean) => `[ ● Claude Radar: ${enabled ? 'ON' : 'OFF'} ]`
@@ -76,8 +80,8 @@ export const elapsed = (ms: number) => {
   return `${seconds}s`
 }
 
-/** The text without file paths and code fragments, spaces collapsed, the first letter in capitals, and at most 40 characters cut by words; empty when nothing is left. */
-const clean = (text: string) => {
+/** The text without file paths and code fragments, spaces collapsed and the first letter in capitals, whatever its length; empty when nothing is left. */
+const tidy = (text: string) => {
   const kept = text
     .replace(/```[\s\S]*?```/g, ' ')
     .replace(/`[^`]*`/g, ' ')
@@ -87,9 +91,12 @@ const clean = (text: string) => {
     .replace(/\s+/g, ' ')
     .replace(/^[\s:;,.\-–]+|[\s:;,\-–]+$/g, '')
 
-  if (kept === '') return ''
+  return kept === '' ? '' : kept.charAt(0).toUpperCase() + kept.slice(1)
+}
 
-  const named = kept.charAt(0).toUpperCase() + kept.slice(1)
+/** The tidied text cut to at most 40 characters by words; empty when nothing is left. */
+const clean = (text: string) => {
+  const named = tidy(text)
 
   if (named.length <= NAME_MAX) return named
 
@@ -317,6 +324,9 @@ export const layoutOf = (rows: readonly TaskRow[], bodyColumns: number) => {
 /** How long a finished subagent stays listed before it is retired, in milliseconds. */
 export const RETIRE_MS = 5000
 
+/** The most finished subagents the history keeps. */
+export const HISTORY_MAX = 50
+
 /** Below this many columns the subagents drop their status column. */
 export const STATUS_MIN_COLUMNS = 40
 
@@ -399,11 +409,14 @@ export const workSubagent = (state: ClaudeRadarState, id: string, activity: stri
 
   if (!isChanged) return state
 
-  return patchSubagent(state, id, {
+  const revived = patchSubagent(state, id, {
     activity: activity ?? agent.activity,
     status: 'working',
     finishedAt: null
   })
+
+  // Alive again: it is no longer a finished one.
+  return isActive(agent.status) ? revived : { ...revived, history: revived.history.filter(entry => entry.id !== id) }
 }
 
 /** The subagent waits for the person's permission; only while it is working. */
@@ -416,14 +429,29 @@ export const finishSubagent = (state: ClaudeRadarState, id: string, reason: Turn
 
   const status: SubagentStatus = reason === 'answer' ? 'done' : reason === 'aborted' ? 'stopped' : 'failed'
 
-  return patchSubagent(state, id, { status, finishedAt: now })
+  const ended = patchSubagent(state, id, { status, finishedAt: now })
+
+  return { ...ended, history: recordHistory(ended.history, ended.subagents[id]!) }
 }
 
-/** Takes out the subagents that finished `RETIRE_MS` ago or more; the same state when none is due. */
-export const pruneFinished = (state: ClaudeRadarState, now: number): ClaudeRadarState => {
-  const kept = Object.entries(state.subagents).filter(([, agent]) => agent.finishedAt === null || now - agent.finishedAt < RETIRE_MS)
+/** The history with `agent` at the front: a copy of its final state, one entry per id, at most `HISTORY_MAX`. */
+export const recordHistory = (history: readonly SubagentState[], agent: SubagentState): SubagentState[] =>
+  [{ ...agent }, ...history.filter(entry => entry.id !== agent.id)].slice(0, HISTORY_MAX)
 
-  return kept.length === Object.keys(state.subagents).length ? state : { ...state, subagents: Object.fromEntries(kept) }
+/** Takes out the subagents that finished `RETIRE_MS` ago or more, making sure each is in the history; the same state when none is due. The history is the pane's: the band never reads it. */
+export const pruneFinished = (state: ClaudeRadarState, now: number): ClaudeRadarState => {
+  const entries = Object.entries(state.subagents)
+  const isDue = (agent: SubagentState) => agent.finishedAt !== null && now - agent.finishedAt >= RETIRE_MS
+  const due = entries.map(([, agent]) => agent).filter(isDue)
+
+  if (due.length === 0) return state
+
+  const history = due
+    .filter(agent => !state.history.some(entry => entry.id === agent.id))
+    .sort((a, b) => (a.finishedAt ?? 0) - (b.finishedAt ?? 0))
+    .reduce(recordHistory, state.history)
+
+  return { ...state, history, subagents: Object.fromEntries(entries.filter(([, agent]) => !isDue(agent))) }
 }
 
 /** How many subagents are at work (running or waiting for the person). */
@@ -457,8 +485,8 @@ export const subagentRowOf = (agent: SubagentState, now: number, depth = 0): Sub
   depth
 })
 
-/** The rows in start order. A hierarchy shows only where `parentId` names an agent still listed: its children follow it, one level in; otherwise the list is flat. */
-export const subagentRowsOf = (subagents: Subagents, now: number): SubagentRow[] => {
+/** The subagents in start order, each with its depth. A hierarchy shows only where `parentId` names an agent still listed: its children follow it, one level in; otherwise the list is flat. */
+const orderedSubagents = (subagents: Subagents): { agent: SubagentState; depth: number }[] => {
   const all = Object.values(subagents).sort((a, b) => a.startedAt - b.startedAt)
   const children = new Map<string, SubagentState[]>()
   const roots: SubagentState[] = []
@@ -473,14 +501,14 @@ export const subagentRowsOf = (subagents: Subagents, now: number): SubagentRow[]
     }
   }
 
-  const rows: SubagentRow[] = []
+  const ordered: { agent: SubagentState; depth: number }[] = []
   const seen = new Set<string>()
 
   const walk = (agent: SubagentState, depth: number) => {
     if (seen.has(agent.id)) return
 
     seen.add(agent.id)
-    rows.push(subagentRowOf(agent, now, depth))
+    ordered.push({ agent, depth })
     for (const child of children.get(agent.id) ?? []) walk(child, depth + 1)
   }
 
@@ -488,8 +516,12 @@ export const subagentRowsOf = (subagents: Subagents, now: number): SubagentRow[]
   // Parents that point at each other have no root: list them flat rather than lose them.
   for (const agent of all) walk(agent, 0)
 
-  return rows
+  return ordered
 }
+
+/** The rows in start order, hierarchy included (see `orderedSubagents`). */
+export const subagentRowsOf = (subagents: Subagents, now: number): SubagentRow[] =>
+  orderedSubagents(subagents).map(({ agent, depth }) => subagentRowOf(agent, now, depth))
 
 /** What the subagents section draws in `lines` rows (its header included): the rows that fit, active ones first and in their order, how many were left out, and whether the status column fits. `null` when there are no subagents. */
 export const subagentViewOf = (subagents: Subagents, now: number, lines: number, bodyColumns: number) => {
@@ -512,5 +544,83 @@ export const subagentViewOf = (subagents: Subagents, now: number, lines: number,
     rows: all.filter((_, index) => keep.has(index)),
     hidden: all.length - slots,
     showStatus: bodyColumns >= STATUS_MIN_COLUMNS
+  }
+}
+
+/** The id of the detail pane (1-64 of letters, digits, `_`, `-`). */
+export const PANE_ID = 'agent-radar'
+
+/** The pane's title. */
+export const PANE_TITLE = 'Claude Radar'
+
+/** The body rows and the columns the pane asks for. */
+export const PANE_ROWS = 14
+export const PANE_COLUMNS = 60
+
+/** The label of the band's detail button. */
+export const paneButtonLabel = (isOpen: boolean) => `[ ◧ ${isOpen ? 'Close' : 'Detail'} ]`
+
+const PHASE_LABELS = { working: 'Working', needsYou: 'Needs you', stuck: 'Stuck', stopped: 'Stopped', done: 'All done' } as const
+
+/** The pane's `Now` block: the turn's title, its phase and its time (frozen once it ended). */
+export type PaneNow = {
+  title: string
+  label: string
+  time: string
+  tone: AgentPhase
+}
+
+/** A subagent in the pane: live or finished, with the whole task (one line, tidied) and the activity. */
+export type PaneAgent = {
+  id: string
+  mark: SubagentRow['mark']
+  status: SubagentStatus
+  name: string
+  time: string
+  task: string | null
+  activity: string
+  label: string
+  depth: number
+}
+
+/** The pane's row of a subagent. */
+const paneAgentOf = (agent: SubagentState, now: number, depth: number): PaneAgent => ({
+  id: agent.id,
+  mark: SUBAGENT_MARKS[agent.status],
+  status: agent.status,
+  name: agent.name,
+  time: elapsed((agent.finishedAt ?? now) - agent.startedAt),
+  task: (agent.task === null ? '' : tidy(agent.task)) || null,
+  activity: agent.activity ?? 'Working',
+  label: SUBAGENT_LABELS[agent.status],
+  depth
+})
+
+/** What the detail pane draws, from the state alone: the turn (`Now`) and its whole checklist, the subagents at work with their hierarchy, and the history of the finished ones, the most recent first. `isEmpty` when there is nothing at all. */
+export const paneOf = (state: ClaudeRadarState, now: number, tick: number) => {
+  const { checklist } = state
+  const hasTurn = checklist.startedAt !== null
+
+  const current: PaneNow | null = hasTurn
+    ? {
+        title: checklist.title || DEFAULT_TITLE,
+        label: PHASE_LABELS[checklist.phase],
+        time: elapsed((checklist.finishedAt ?? now) - checklist.startedAt!),
+        tone: checklist.phase
+      }
+    : null
+
+  // A finished one waits in the band for a moment but is already in the history: the live list is the ones at work.
+  const live = orderedSubagents(state.subagents)
+    .filter(({ agent }) => isActive(agent.status))
+    .map(({ agent, depth }) => paneAgentOf(agent, now, depth))
+  const history = state.history.map(agent => paneAgentOf(agent, now, 0))
+
+  return {
+    isEmpty: !hasTurn && live.length === 0 && history.length === 0,
+    now: current,
+    tasks: hasTurn ? rowsOf(checklist, tick) : [],
+    live,
+    history
   }
 }

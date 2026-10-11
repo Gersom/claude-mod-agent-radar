@@ -41,6 +41,8 @@ export type ClaudeRadarState = {
     isCollapsed: boolean
   }
   subagents: Record<string, SubagentState>
+  /** The subagents that finished, the most recent first, at most 50, one entry per id; the band ignores it, the detail pane lists it. */
+  history: SubagentState[]
   tick: number
 }
 
@@ -50,6 +52,8 @@ declare module 'claude-code' {
       claudeRadarState: ClaudeRadarState
       /** Whether the tool rows are hidden now (see `hidesTools`); kept apart from the state so the transcript redraws on a change of phase, not on every tick. */
       claudeRadarHidesTools: boolean
+      /** Whether the detail pane is open: set when the button opens it, cleared when it closes by any hand. */
+      claudeRadarPaneOpen: boolean
     }
   }
 }

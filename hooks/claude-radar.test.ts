@@ -1,6 +1,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 
 import {
+  HISTORY_MAX,
   activityOf,
   addTask,
   advance,
@@ -18,7 +19,11 @@ import {
   isLive,
   layoutOf,
   normalizeActivity,
+  paneButtonLabel,
+  paneOf,
   pruneFinished,
+  recordHistory,
+  resetSession,
   resumeWork,
   rowsOf,
   spawnSubagent,
@@ -55,9 +60,7 @@ const memory = (on: any, saved: Record<string, unknown> = {}) => {
 }
 
 /** Observes `$.ui.toast`: every text the radar shows. */
-const watchToasts = (on: any) => {
-  const toasts: string[] = []
-
+const watchToasts = (on: any, toasts: string[] = []) => {
   on('ui.toast', (_: unknown, e: { text: string }) => {
     toasts.push(e.text)
 
@@ -437,13 +440,13 @@ const isFramed = async (ui: { find: (query: { type: string }) => Promise<{ child
 }
 
 /** The bottom a register test stands on: the band, a store, the clock and the turn events answering as the engine does. */
-const radar = (on: any, draw: (...args: any[]) => unknown = () => engineBand) => {
+const radar = (on: any, draw: (...args: any[]) => unknown = () => engineBand, toasts: string[] = []) => {
   on('ui.render', draw)
   on('session.start', ($: unknown, e: { cwd: string }) => ({ cwd: e.cwd }))
   on('turn.start', ($: unknown, e: { turnId: string }) => ({ turnId: e.turnId }))
   on('turn.complete', ($: unknown, e: { answer: string }) => ({ text: e.answer }))
   memory(on)
-  watchToasts(on)
+  watchToasts(on, toasts)
 
   return mock.clock(on, { now: Date.now() })
 }
@@ -1733,6 +1736,346 @@ test('a subagent with no task and no tool seen shows Working', async ($, on) => 
   expect(await ui.find({ type: 'Text', text: /^Explore$/ })).toBeDefined()
   expect(await ui.findAll({ type: 'Text', text: /^Working$/ })).toHaveLength(3)
   await ui.unmount()
+})
+
+const finishedAgent = (state: ReturnType<typeof initialState>, id: string, at: number, reason: 'answer' | 'error' | 'aborted' = 'answer') =>
+  finishSubagent(spawned(state, id, `agent-${id}`, 0), id, reason, at)
+
+test('a subagent that finishes goes into the history with its final state, the most recent first, one entry per id', async () => {
+  let state = finishedAgent(initialState(), 'a1', 1000)
+
+  state = finishedAgent(state, 'a2', 2000, 'error')
+  state = finishedAgent(state, 'a3', 3000, 'aborted')
+
+  expect(state.history.map(agent => [agent.id, agent.status, agent.finishedAt])).toEqual([
+    ['a3', 'stopped', 3000],
+    ['a2', 'failed', 2000],
+    ['a1', 'done', 1000]
+  ])
+  // The band's list is as before: the history is another record.
+  expect(Object.keys(state.subagents)).toEqual(['a1', 'a2', 'a3'])
+  // A copy: later changes to the live entry do not rewrite it.
+  expect(state.history[2]).not.toBe(state.subagents['a1'])
+  expect(recordHistory(state.history, { ...state.history[2]!, status: 'failed' }).map(agent => agent.id)).toEqual(['a1', 'a3', 'a2'])
+  expect(recordHistory(state.history, state.history[1]!)).toHaveLength(3)
+})
+
+test('the history keeps 50 at most, drops the oldest, and is not touched by an agent that is still working', async () => {
+  let state = initialState()
+
+  for (let i = 0; i < 53; i++) state = finishedAgent(state, `a${i}`, 1000 + i)
+
+  expect(state.history).toHaveLength(HISTORY_MAX)
+  expect(HISTORY_MAX).toBe(50)
+  expect(state.history[0]?.id).toBe('a52')
+  expect(state.history[49]?.id).toBe('a3')
+  expect(new Set(state.history.map(agent => agent.id)).size).toBe(50)
+
+  const busy = spawned(initialState(), 'b1')
+
+  expect(busy.history).toEqual([])
+  expect(workSubagent(busy, 'b1', 'Running tests').history).toEqual([])
+})
+
+test('retiring a finished subagent from the band keeps it in the history, once, and a revived one leaves it', async () => {
+  const done = finishedAgent(initialState(), 'a1', 10_000)
+  const retired = pruneFinished(done, 15_000)
+
+  expect(retired.subagents).toEqual({})
+  expect(retired.history.map(agent => agent.id)).toEqual(['a1'])
+  // Retired by the timer with nothing recorded yet (the history was lost): recorded then, oldest first.
+  const bare = { ...spawned(spawned(initialState(), 'x', 'x', 0), 'y', 'y', 0), history: [] }
+  const ended = { ...bare, subagents: { x: { ...bare.subagents['x']!, status: 'done' as const, finishedAt: 9000 }, y: { ...bare.subagents['y']!, status: 'failed' as const, finishedAt: 8000 } } }
+
+  expect(pruneFinished(ended, 20_000).history.map(agent => agent.id)).toEqual(['x', 'y'])
+  expect(pruneFinished(done, 14_999)).toBe(done)
+
+  const back = workSubagent(done, 'a1', 'Reading project files')
+
+  expect(back.history).toEqual([])
+  expect(finishSubagent(back, 'a1', 'error', 20_000).history.map(agent => [agent.id, agent.status])).toEqual([['a1', 'failed']])
+  // Finished twice in a row: still one entry.
+  expect(finishSubagent(done, 'a1', 'error', 99_999).history).toBe(done.history)
+})
+
+test('a session that ends is cleared, the history too, and only the ON/OFF choice stays', async () => {
+  const state = { ...finishedAgent(startTurn(initialState(), 'go', 0), 'a1', 1000), claudeRadarEnabled: false }
+  const fresh = resetSession(state)
+
+  expect(fresh).toEqual({ ...initialState(), claudeRadarEnabled: false })
+  expect(fresh.history).toEqual([])
+})
+
+test('the pane view has the turn, its whole checklist, the subagents at work with their hierarchy, and the history', async () => {
+  expect(paneOf(initialState(), 0, 0)).toMatchObject({ isEmpty: true, now: null, tasks: [], live: [], history: [] })
+
+  let state = writeTodos(startTurn(initialState(), 'Build my landing page', 1000), [
+    { content: 'Analyze', status: 'completed' },
+    { content: 'Implement', status: 'in_progress' }
+  ])
+
+  state = spawned(state, 'a1', 'lead', 2000, { task: 'Review the login flow in /src/auth and the refresh token handling of the session store' })
+  state = spawned(state, 'a2', 'helper', 3000, { parentId: 'a1', task: null })
+  state = workSubagent(state, 'a2', 'Running tests')
+  state = finishedAgent(state, 'a3', 4000)
+
+  const view = paneOf(state, 61_000, 0)
+
+  expect(view.isEmpty).toBe(false)
+  expect(view.now).toEqual({ title: 'Build my landing page', label: 'Working', time: '1m 00s', tone: 'working' })
+  expect(view.tasks.map(row => row.name)).toEqual(['Analyze', 'Implement'])
+  // Live: the ones at work (the finished one is in the history), indented under the parent.
+  expect(view.live.map(agent => [agent.name, agent.depth, agent.activity])).toEqual([
+    ['lead', 0, 'Working'],
+    ['helper', 1, 'Running tests']
+  ])
+  // The whole task, tidied and not cut at 40.
+  expect(view.live[0]?.task).toBe('Review the login flow in and the refresh token handling of the session store')
+  expect(view.live[0]!.task!.length).toBeGreaterThan(40)
+  expect(view.live[1]?.task).toBeNull()
+  expect(view.history.map(agent => [agent.name, agent.label, agent.time])).toEqual([['agent-a3', 'Done', '4s']])
+
+  expect(paneOf(finishTurn(state, 'answer', 91_000), 999_000, 0).now).toMatchObject({ label: 'All done', time: '1m 30s', tone: 'done' })
+  expect(paneButtonLabel(false)).toBe('[ ◧ Detail ]')
+  expect(paneButtonLabel(true)).toBe('[ ◧ Close ]')
+})
+
+/** A `ui.open` / `ui.close` beneath the plugin, and the calls that reached them. */
+const panes = (on: any, isPlaced = true, opened: unknown[] = []) => {
+  const calls: string[] = []
+
+  on('ui.open', (_: unknown, e: { id: string }) => {
+    calls.push(`open ${e.id}`)
+    opened.push(e)
+
+    return { value: isPlaced ? { isPlaced: true } : { isPlaced: false, reason: 'no panes here' } } as never
+  })
+  on('ui.close', (_: unknown, e: { id: string }) => {
+    calls.push(`close ${e.id}`)
+
+    return { value: undefined } as never
+  })
+
+  return calls
+}
+
+const paneView = ($: any, bodyColumns = 60) =>
+  $.ui.mount({
+    plugin: 'agent-radar',
+    surface: 'terminal',
+    component: 'Pane',
+    requestId: 'agent-radar',
+    props: { title: 'Claude Radar', isFocused: false, bodyColumns, placement: 'inline' } as never
+  } as never)
+
+test('the detail button opens the pane and closes it, and its label follows', async ($, on) => {
+  radar(on)
+
+  const opened: unknown[] = []
+  const calls = panes(on, true, opened)
+
+  const ui = await $.ui.mount({ plugin: 'agent-radar', surface: 'terminal', ...BAND })
+
+  expect(await ui.find({ type: 'Button', key: 'pane', text: /^\[ ◧ Detail \]$/ })).toBeDefined()
+  expect(calls).toEqual([])
+
+  await ui.press({ key: 'pane' })
+  expect(calls).toEqual(['open agent-radar'])
+  expect(opened[0]).toMatchObject({ id: 'agent-radar', title: 'Claude Radar', rows: 14, columns: 60 })
+  expect(await ui.find({ type: 'Button', key: 'pane', text: /^\[ ◧ Close \]$/ })).toBeDefined()
+
+  await ui.press({ key: 'pane' })
+  expect(calls).toEqual(['open agent-radar', 'close agent-radar'])
+  expect(await ui.find({ type: 'Button', key: 'pane', text: /^\[ ◧ Detail \]$/ })).toBeDefined()
+  // The detail button sits to the left of the ON/OFF button.
+  expect(await ui.find({ type: 'Button', key: 'toggle', text: /Claude Radar: ON/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('the detail button shows before any turn and in the middle of work, and the pane never opens by itself', async ($, on) => {
+  const clock = radar(on)
+  const calls = panes(on)
+
+  on('agent.spawn', () => ({ model: 'm', agentId: 'a1' }))
+  on('tool.call', () => answered({ oldTodos: [], newTodos: [] }))
+  on('session.end', () => ({ sessionId: 's' }) as never)
+  await $.session.start({ cwd: '/work', surface: 'terminal', isInteractive: true })
+
+  const before = await $.ui.mount({ plugin: 'agent-radar', surface: 'terminal', ...BAND })
+
+  expect(await before.find({ type: 'Button', key: 'pane' })).toBeDefined()
+  await before.unmount()
+
+  await begin($)
+  await $.tool.call({ tool: 'TodoWrite', todos: todos(['Step', 'in_progress']) })
+  await spawn($, 'frontend-developer')
+  await finish($, 'answer', 'a1')
+  await finish($)
+  await clock.advance(10 * MS)
+
+  const ui = await $.ui.mount({ plugin: 'agent-radar', surface: 'terminal', ...BAND })
+
+  expect(await ui.find({ type: 'Button', key: 'pane' })).toBeDefined()
+  await ui.unmount()
+  await $.session.end({ sessionId: 's' } as never)
+  expect(calls).toEqual([])
+})
+
+test('a surface that places no panes gets a toast, and no pane is left waiting', async ($, on) => {
+  const toasts: string[] = []
+
+  radar(on, undefined, toasts)
+
+  const calls = panes(on, false)
+  const ui = await $.ui.mount({ plugin: 'agent-radar', surface: 'terminal', ...BAND })
+
+  await ui.press({ key: 'pane' })
+  expect(calls).toEqual(['open agent-radar', 'close agent-radar'])
+  expect(toasts).toEqual(['The detail pane is not available here'])
+  expect(await ui.find({ type: 'Button', key: 'pane', text: /Detail/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('OFF closes the pane and leaves only the ON/OFF button; ON brings the detail button back', async ($, on) => {
+  radar(on)
+
+  const calls = panes(on)
+  const ui = await $.ui.mount({ plugin: 'agent-radar', surface: 'terminal', ...BAND })
+
+  await ui.press({ key: 'pane' })
+  await ui.press({ key: 'toggle' })
+  expect(calls).toEqual(['open agent-radar', 'close agent-radar'])
+  expect(await ui.find({ type: 'Button', key: 'pane' })).toBeUndefined()
+  expect(await ui.find({ type: 'Button', key: 'toggle', text: /Claude Radar: OFF/ })).toBeDefined()
+
+  await ui.press({ key: 'toggle' })
+  expect(await ui.find({ type: 'Button', key: 'pane', text: /Detail/ })).toBeDefined()
+  // OFF with the pane already closed asks nothing more of the engine.
+  await ui.press({ key: 'toggle' })
+  expect(calls).toEqual(['open agent-radar', 'close agent-radar'])
+  await ui.unmount()
+})
+
+test('the pane says there is nothing running yet when there is nothing', async ($, on) => {
+  radar(on)
+
+  const ui = await paneView($)
+
+  expect(await ui.find({ type: 'Text', text: /^Nothing running yet$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^History$/ })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('the pane draws the turn, the whole checklist, the subagents at work and the history', async ($, on) => {
+  const clock = squad(on, 'a1', 'a2', 'a3')
+
+  await begin($)
+  await $.tool.call({
+    tool: 'TodoWrite',
+    todos: todos(['Analyze project structure', 'completed'], ['Implement authentication', 'in_progress'], ['Run final tests', 'pending'])
+  })
+  await spawn($, 'frontend-developer', 'Building the login components /src/ui')
+  await spawn($, 'backend-developer', 'Reviewing authentication routes', { parentAgentId: 'a1' })
+  await spawn($, 'code-reviewer', 'Reviewing the diff')
+  await clock.advance(45 * MS)
+  await finish($, 'error', 'a3')
+  await $.tool.call({ tool: 'Read', file_path: '/secret/x.ts', agentId: 'a1' } as never)
+
+  const ui = await paneView($)
+
+  expect(await ui.find({ type: 'Text', text: /^Now$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^Build my landing page$/ })).toBeDefined()
+  for (const name of [/^Analyze project structure$/, /^Implement authentication$/, /^Run final tests$/]) {
+    expect(await ui.find({ type: 'Text', text: name })).toBeDefined()
+  }
+  expect(await ui.find({ type: 'Text', text: /^██████████$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^░░░░░░░░░░$/ })).toBeDefined()
+
+  expect(await ui.find({ type: 'Text', text: /^Subagents$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^2 active$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^Building the login components$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^Reading project files$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /secret|\/src/ })).toBeUndefined()
+  // The one at work under another is indented.
+  expect(await ui.findAll({ type: 'Box', props: { paddingLeft: 2 } } as never)).not.toHaveLength(0)
+
+  expect(await ui.find({ type: 'Text', text: /^History$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^Failed · Reviewing the diff$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^No finished subagents yet$/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /^✗$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^45s$/ })).toBeDefined()
+
+  // Past the band's five seconds the finished one is still there, and the live list is unchanged.
+  await clock.advance(10 * MS)
+  expect(await ui.find({ type: 'Text', text: /^code-reviewer$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^2 active$/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('the pane says so when no subagent has finished, and keeps the history after the band retired it', async ($, on) => {
+  const clock = squad(on, 'a1')
+
+  await begin($)
+  await spawn($, 'Explore', 'Mapping the repo')
+
+  const ui = await paneView($)
+
+  expect(await ui.find({ type: 'Text', text: /^No finished subagents yet$/ })).toBeDefined()
+
+  await finish($, 'answer', 'a1')
+  await clock.advance(6 * MS)
+
+  const band = await mount($)
+
+  expect(await band.find({ type: 'Text', text: /^Explore$/ })).toBeUndefined()
+  await band.unmount()
+  expect(await ui.find({ type: 'Text', text: /^Explore$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^Done · Mapping the repo$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^No finished subagents yet$/ })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('the pane fits its width: no bars when narrow, every name cut with an ellipsis and none wider than the body', async ($, on) => {
+  squad(on, 'a1')
+  await begin($)
+  await $.tool.call({ tool: 'TodoWrite', todos: todos(['Implement a very long authentication flow with tokens', 'in_progress']) })
+  await spawn($, 'a-very-long-custom-agent-name-for-the-frontend', 'A long delegated task that goes on and on')
+
+  const narrow = await paneView($, 24)
+
+  expect(await narrow.find({ type: 'Text', text: /[█░]/ })).toBeUndefined()
+
+  for (const text of await narrow.findAll({ type: 'Text', text: /agent-name|authentication|delegated/ })) {
+    expect(text.props?.wrap).toBe('truncate-end')
+  }
+  await narrow.unmount()
+
+  const wide = await paneView($, 80)
+
+  expect(await wide.find({ type: 'Text', text: /[█░]{10}/ })).toBeDefined()
+  await wide.unmount()
+})
+
+test('the desktop surface draws the pane too, and it only reads: the state is as it was', async ($, on) => {
+  squad(on, 'a1')
+  await begin($)
+  await spawn($, 'frontend-developer')
+
+  const ui = await $.ui.mount({
+    plugin: 'agent-radar',
+    surface: 'desktop',
+    component: 'Pane',
+    requestId: 'agent-radar',
+    props: { title: 'Claude Radar', isFocused: false, bodyColumns: 60, placement: 'dock' } as never
+  } as never)
+
+  expect(await ui.find({ type: 'Text', text: /^frontend-developer$/ })).toBeDefined()
+  await ui.unmount()
+
+  const band = await mount($)
+
+  expect(await band.find({ type: 'Text', text: /^1 active$/ })).toBeDefined()
+  await band.unmount()
 })
 
 test('the subagents draw on the desktop surface too', async ($, on) => {

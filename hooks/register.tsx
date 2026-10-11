@@ -4,6 +4,10 @@ import type { EngineInterface, Register } from 'claude-code'
 import type { ClaudeRadarState } from '../types'
 
 import {
+  PANE_COLUMNS,
+  PANE_ID,
+  PANE_ROWS,
+  PANE_TITLE,
   TICK_MS,
   activityOf,
   addTask,
@@ -20,7 +24,10 @@ import {
   initialState,
   isLive,
   layoutOf,
+  paneButtonLabel,
+  paneOf,
   pruneFinished,
+  resetSession,
   resumeWork,
   rowsOf,
   spawnSubagent,
@@ -31,6 +38,7 @@ import {
   workSubagent,
   writeTodos
 } from './claude-radar'
+import type { PaneAgent } from './claude-radar'
 
 /** The key of `$.store` that keeps the ON/OFF choice between sessions. */
 const STORE_KEY = 'enabled'
@@ -64,6 +72,9 @@ const radar = atom({ plugin: 'agent-radar', key: 'claudeRadarState' } as const, 
 /** Whether the tool rows are hidden: the one value the transcript's rows read, so they redraw when it flips and not on every tick of the state. */
 const hideTools = atom({ plugin: 'agent-radar', key: 'claudeRadarHidesTools' } as const, false)
 
+/** Whether the detail pane is open: set when the button opens it, cleared when it closes, whoever closes it. */
+const paneOpen = atom({ plugin: 'agent-radar', key: 'claudeRadarPaneOpen' } as const, false)
+
 /** Applies `fn` to the radar's state and keeps `hideTools` in step with it, written only when it changes. */
 const change = async ($: EngineInterface, fn: (state: ClaudeRadarState) => ClaudeRadarState) => {
   const state = await update($, radar, fn)
@@ -91,7 +102,7 @@ const ensureEnabled = ($: EngineInterface) => {
     if (typeof saved === 'boolean') {
       const enabled = saved
 
-      await change($,state => ({ ...state, claudeRadarEnabled: enabled }))
+      await change($, state => ({ ...state, claudeRadarEnabled: enabled }))
     }
   })()
 
@@ -116,15 +127,41 @@ const start = async ($: EngineInterface) => {
 
   ticker = $.clock.every(TICK_MS, async () => {
     const time = await $.clock.now()
-    const state = await change($,current => advance(current, time))
+    const state = await change($, current => advance(current, time))
 
     if (!state.claudeRadarEnabled || !isLive(state)) stop()
   })
 }
 
+/** Closes the detail pane if it is open and clears the flag here: the engine leaves a plugin's own hook out of the close the plugin makes, so the `ui.close` hook below only hears the person's. */
+const closePane = async ($: EngineInterface) => {
+  if (!(await read($, paneOpen))) return
+
+  await $.ui.close({ id: PANE_ID })
+  await update($, paneOpen, () => false)
+}
+
+/** The detail button: opens the pane, or closes it if it is open. Only a press opens it, never the radar on its own. A surface that places no panes gets a toast and no pane left waiting. */
+const togglePane = async ($: EngineInterface) => {
+  if (await read($, paneOpen)) return closePane($)
+
+  const opened = await $.ui.open({ id: PANE_ID, title: PANE_TITLE, rows: PANE_ROWS, columns: PANE_COLUMNS })
+
+  if (opened.isPlaced) {
+    await update($, paneOpen, () => true)
+  } else {
+    // Open but undrawn: leave nothing waiting to pop up later on its own.
+    await $.ui.close({ id: PANE_ID })
+    $.ui.toast('The detail pane is not available here')
+  }
+}
+
 /** Turns the radar ON or OFF, saves the choice and says so with a brief toast. */
 const setEnabled = async ($: EngineInterface, enabled: boolean) => {
-  await change($,state => ({ ...state, claudeRadarEnabled: enabled }))
+  await change($, state => ({ ...state, claudeRadarEnabled: enabled }))
+
+  // OFF leaves only the ON/OFF button: no pane stays open.
+  if (!enabled) await closePane($)
 
   try {
     await $.store.set(STORE_KEY, enabled)
@@ -138,7 +175,7 @@ const setEnabled = async ($: EngineInterface, enabled: boolean) => {
     // Back ON in the middle of a turn: what folded or retired while nobody looked goes now, and the timer goes on.
     const time = await $.clock.now()
 
-    await change($,state => pruneFinished(collapseIfDue(state, time), time))
+    await change($, state => pruneFinished(collapseIfDue(state, time), time))
     await start($)
   }
 
@@ -155,14 +192,25 @@ export const register: Register = on => {
 
   on('session.end', async ($, e, next) => {
     stop()
+    // A new session starts clean: what was followed, the history included, goes; the ON/OFF choice stays.
+    await change($, state => resetSession(state))
 
     return next(e)
+  })
+
+  // The person's close mark or key leaves the flag, and so the button, in step with the pane (the button's own close clears it in `closePane`).
+  on('ui.close', { id: PANE_ID }, async ($, e, next) => {
+    const closed = await next(e)
+
+    await update($, paneOpen, () => false)
+
+    return closed
   })
 
   on('turn.start', async ($, e, next) => {
     const time = await $.clock.now()
 
-    await change($,state => startTurn(state, e.text, time))
+    await change($, state => startTurn(state, e.text, time))
     await start($)
 
     return next(e)
@@ -176,7 +224,7 @@ export const register: Register = on => {
     if (id !== undefined) {
       const time = await $.clock.now()
 
-      await change($,state =>
+      await change($, state =>
         spawnSubagent(state, { id, name: e.subagentType, task: e.description, parentId: e.parentAgentId }, time)
       )
       await start($)
@@ -189,13 +237,13 @@ export const register: Register = on => {
     const time = await $.clock.now()
 
     if (e.agentId === undefined) {
-      await change($,state => finishTurn(state, e.reason, time))
+      await change($, state => finishTurn(state, e.reason, time))
       await start($)
     } else {
       // A subagent's turn ends that subagent, never the main one; an agent not followed changes nothing.
       const id = e.agentId
 
-      await change($,state => finishSubagent(state, id, e.reason, time))
+      await change($, state => finishSubagent(state, id, e.reason, time))
     }
 
     return next(e)
@@ -207,7 +255,7 @@ export const register: Register = on => {
       const id = e.agentId
       const activity = activityOf(e.tool, e.tool === 'Bash' ? e.command : undefined)
 
-      await change($,state => workSubagent(state, id, activity))
+      await change($, state => workSubagent(state, id, activity))
 
       return next(e)
     }
@@ -215,17 +263,17 @@ export const register: Register = on => {
     const ran = await next(e)
 
     // The call is over, whether the person allowed it or not: Claude is working again.
-    await change($,state => resumeWork(state))
+    await change($, state => resumeWork(state))
 
     if (didRun(ran)) {
       if (e.tool === 'TodoWrite') {
-        await change($,state => writeTodos(state, e.todos))
+        await change($, state => writeTodos(state, e.todos))
       } else if (e.tool === 'TaskCreate') {
         const id = taskIdOf(ran.result, e.tool_use_id)
 
-        await change($,state => addTask(state, id, e.subject))
+        await change($, state => addTask(state, id, e.subject))
       } else if (e.tool === 'TaskUpdate') {
-        await change($,state => updateTask(state, e.taskId, { status: e.status, subject: e.subject }))
+        await change($, state => updateTask(state, e.taskId, { status: e.status, subject: e.subject }))
       }
     }
 
@@ -239,11 +287,11 @@ export const register: Register = on => {
     // Only the model's own calls count: another plugin's `$.tool.check` query asks, it does not wait for anyone.
     if (next.origin.plugin === 'engine' && verdict.decision === 'ask') {
       if (e.agentId === undefined) {
-        await change($,state => askUser(state))
+        await change($, state => askUser(state))
       } else {
         const id = e.agentId
 
-        await change($,state => askSubagent(state, id))
+        await change($, state => askSubagent(state, id))
       }
     }
 
@@ -292,6 +340,7 @@ export const register: Register = on => {
     if (e.props.hasSurvey) return below
 
     const { claudeRadarEnabled: enabled, checklist, subagents, tick } = await read($, radar)
+    const isPaneOpen = await read($, paneOpen)
     const { Box, Button, Text } = $.ui.resolve(e)
 
     // The button stays visible whether the radar is ON or OFF, and whether Claude is idle or working.
@@ -301,11 +350,25 @@ export const register: Register = on => {
       </Button>
     )
 
-    // OFF, or an agent that never worked and no subagent to show: the button alone, as before.
+    // ON: the detail button beside it, to its left. OFF: the ON/OFF button alone.
+    const controls = enabled ? (
+      <Box>
+        <Box flexShrink={0} marginRight={1}>
+          <Button key="pane" plain dimColor onPress={() => void togglePane($)}>
+            {paneButtonLabel(isPaneOpen)}
+          </Button>
+        </Box>
+        {button}
+      </Box>
+    ) : (
+      button
+    )
+
+    // OFF, or an agent that never worked and no subagent to show: the buttons alone, as before.
     if (!enabled || (checklist.startedAt === null && Object.keys(subagents).length === 0)) {
       return (
         <Box flexDirection="column">
-          <Box justifyContent="flex-end">{button}</Box>
+          <Box justifyContent="flex-end">{controls}</Box>
           {below}
         </Box>
       )
@@ -333,13 +396,13 @@ export const register: Register = on => {
           )}
         </Box>
         <Box flexShrink={0} marginLeft={2}>
-          {button}
+          {controls}
         </Box>
       </Box>
     )
 
     // No turn yet (only subagents to show): there is no title, the button alone heads the block.
-    const header = checklist.startedAt === null ? <Box justifyContent="flex-end">{button}</Box> : titled
+    const header = checklist.startedAt === null ? <Box justifyContent="flex-end">{controls}</Box> : titled
 
     // Folded, the checklist and the main status are one line; the subagents keep their rows.
     const rows = checklist.isCollapsed ? [] : rowsOf(checklist, tick)
@@ -448,6 +511,154 @@ export const register: Register = on => {
       <Box flexDirection="column">
         {panel}
         {below}
+      </Box>
+    )
+  })
+
+  // The detail pane, opened only by the band's button: the turn, its whole checklist, the subagents at work and the history. It only reads.
+  on('ui.render', { component: 'Pane', requestId: PANE_ID }, async ($, e) => {
+    const state = await read($, radar)
+    const now = await $.clock.now()
+    const { Box, Text } = $.ui.resolve(e)
+    const columns = e.props.bodyColumns
+
+    const view = paneOf(state, now, state.tick)
+
+    if (view.isEmpty) {
+      return (
+        <Box flexDirection="column">
+          <Text wrap="truncate-end" dimColor>
+            Nothing running yet
+          </Text>
+        </Box>
+      )
+    }
+
+    // The body has no frame of its own to take off: the band's four columns of border and padding are added back for `layoutOf`.
+    const { showBars, nameWidth } = layoutOf(view.tasks, columns + 4)
+    const showStatus = columns + 4 >= 40
+
+    /** A section's title, with an optional figure at the right. */
+    const heading = (key: string, title: string, figure?: string) => (
+      <Box key={key} marginTop={key === 'now' ? 0 : 1}>
+        <Box flexGrow={1} flexShrink={1}>
+          <Text wrap="truncate-end" bold>
+            {title}
+          </Text>
+        </Box>
+        {figure === undefined ? null : (
+          <Box flexShrink={0} marginLeft={2}>
+            <Text dimColor>{figure}</Text>
+          </Box>
+        )}
+      </Box>
+    )
+
+    /** The name and time line of a subagent, live or finished. */
+    const nameLine = (agent: PaneAgent) => (
+      <Box>
+        <Box flexShrink={0} width={2}>
+          <Text color={SUBAGENT_TONE[agent.status]}>{agent.mark}</Text>
+        </Box>
+        <Box flexGrow={1} flexShrink={1}>
+          <Text wrap="truncate-end" bold={agent.status === 'working' || agent.status === 'needsYou'}>
+            {agent.name}
+          </Text>
+        </Box>
+        <Box flexShrink={0} marginLeft={2}>
+          <Text dimColor>{agent.time}</Text>
+        </Box>
+      </Box>
+    )
+
+    /** A dim line under a name, indented past the mark. */
+    const detailLine = (text: string, status?: PaneAgent) => (
+      <Box>
+        <Box flexShrink={0} width={2} />
+        <Box flexGrow={1} flexShrink={1}>
+          <Text wrap="truncate-end" dimColor>
+            {text}
+          </Text>
+        </Box>
+        {status === undefined || !showStatus ? null : (
+          <Box flexShrink={0} marginLeft={2}>
+            <Text color={SUBAGENT_TONE[status.status]}>{status.label}</Text>
+          </Box>
+        )}
+      </Box>
+    )
+
+    return (
+      <Box flexDirection="column">
+        {view.now === null ? null : (
+          <Box key="now-block" flexDirection="column">
+            {heading('now', 'Now')}
+            <Text wrap="truncate-end" bold>
+              {view.now.title}
+            </Text>
+            <Box>
+              <Box flexGrow={1} flexShrink={1}>
+                <Text wrap="truncate-end" color={TONE[view.now.tone]}>
+                  {view.now.label}
+                </Text>
+              </Box>
+              <Box flexShrink={0} marginLeft={2}>
+                <Text dimColor>{view.now.time}</Text>
+              </Box>
+            </Box>
+            {view.tasks.map((row, index) => (
+              <Box key={`task-${index}`}>
+                <Box flexShrink={0} width={2}>
+                  <Text color={row.status === 'done' ? GREEN : row.status === 'active' ? ACTIVE : undefined} dimColor={row.status === 'upcoming'}>
+                    {row.mark}
+                  </Text>
+                </Box>
+                <Box flexShrink={0} width={nameWidth}>
+                  <Text wrap="truncate-end" bold={row.status === 'active'} dimColor={row.status !== 'active'}>
+                    {row.name}
+                  </Text>
+                </Box>
+                {showBars ? (
+                  <Box flexShrink={0} marginLeft={2}>
+                    <Text color={row.status === 'done' ? GREEN : row.status === 'active' ? ACTIVE : undefined} dimColor={row.status === 'upcoming'}>
+                      {row.bar}
+                    </Text>
+                  </Box>
+                ) : null}
+                <Box flexShrink={0} marginLeft={2}>
+                  <Text dimColor={row.status !== 'active'}>{row.label}</Text>
+                </Box>
+              </Box>
+            ))}
+          </Box>
+        )}
+        {view.live.length === 0 ? null : (
+          <Box key="live-block" flexDirection="column">
+            {heading('live', 'Subagents', `${view.live.length} active`)}
+            {view.live.map(agent => (
+              <Box key={`live-${agent.id}`} flexDirection="column" paddingLeft={agent.depth * 2}>
+                {nameLine(agent)}
+                {agent.task === null ? null : detailLine(agent.task)}
+                {detailLine(agent.activity, agent)}
+              </Box>
+            ))}
+          </Box>
+        )}
+        <Box key="history-block" flexDirection="column">
+          {heading('history', 'History', view.history.length === 0 ? undefined : String(view.history.length))}
+          {view.history.length === 0 ? (
+            <Text wrap="truncate-end" dimColor>
+              No finished subagents yet
+            </Text>
+          ) : (
+            view.history.map(agent => (
+              <Box key={`history-${agent.id}`} flexDirection="column">
+                {nameLine(agent)}
+                {detailLine(agent.task === null ? agent.label : `${agent.label} · ${agent.task}`)}
+              </Box>
+            ))
+          )}
+        </Box>
       </Box>
     )
   })
