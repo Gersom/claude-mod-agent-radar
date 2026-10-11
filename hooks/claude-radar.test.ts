@@ -1973,7 +1973,7 @@ test('a surface that places no panes gets a toast, and no pane is left waiting',
 
   await ui.press({ key: 'pane' })
   expect(calls).toEqual(['open agent-radar', 'close agent-radar'])
-  expect(toasts).toEqual(['The detail pane is not available here'])
+  expect(toasts).toEqual(['The detail pane is not available here: no panes here'])
   expect(await ui.find({ type: 'Button', key: 'pane', text: /Detail/ })).toBeDefined()
   await ui.unmount()
 })

@@ -143,8 +143,9 @@ const closePane = async ($: EngineInterface) => {
 }
 
 /** The detail button: opens the pane, or closes it if it is open. Only a press opens it, never the radar on its own. A surface that places no panes gets a toast and no pane left waiting. */
-const togglePane = async ($: EngineInterface) => {
-  if (await read($, paneOpen)) return closePane($)
+const togglePane = async ($: EngineInterface, isOpen: boolean) => {
+  // `isOpen` is what the band drew, so the open call below is the handler's first await and the engine still sees it as the person's own press.
+  if (isOpen) return closePane($)
 
   const opened = await $.ui.open({ id: PANE_ID, title: PANE_TITLE, rows: PANE_ROWS, columns: PANE_COLUMNS })
 
@@ -155,7 +156,7 @@ const togglePane = async ($: EngineInterface) => {
   } else {
     // Open but undrawn: leave nothing waiting to pop up later on its own.
     await $.ui.close({ id: PANE_ID })
-    $.ui.toast('The detail pane is not available here')
+    $.ui.toast(`The detail pane is not available here: ${opened.reason}`)
   }
 }
 
@@ -363,7 +364,7 @@ export const register: Register = on => {
           </Box>
           {enabled ? (
             <Box flexShrink={0} marginLeft={2} marginRight={1}>
-              <Button key="pane" plain dimColor onPress={() => void togglePane($)}>
+              <Button key="pane" plain dimColor onPress={() => void togglePane($, isPaneOpen)}>
                 {paneButtonLabel(isPaneOpen)}
               </Button>
             </Box>
