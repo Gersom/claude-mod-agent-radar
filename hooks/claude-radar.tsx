@@ -1,4 +1,6 @@
-import type { AgentPhase, ChecklistTask, ClaudeRadarState, SubagentState, SubagentStatus } from '../types'
+import type { ActivityCode, AgentPhase, ChecklistTask, ClaudeRadarState, ReasonCode, SubagentState, SubagentStatus } from '../types'
+
+import type { Texts } from './i18n'
 
 /** The radar's state before anything has happened: on by default, nothing running, nothing to show. */
 export const initialState = (): ClaudeRadarState => ({
@@ -20,8 +22,8 @@ export const initialState = (): ClaudeRadarState => ({
 /** A session that ended: everything the radar followed is gone; only the ON/OFF choice stays. */
 export const resetSession = (state: ClaudeRadarState): ClaudeRadarState => ({ ...initialState(), claudeRadarEnabled: state.claudeRadarEnabled })
 
-/** The label of the header's button. */
-export const buttonLabel = (enabled: boolean) => `[ ● Claude Radar: ${enabled ? 'ON' : 'OFF'} ]`
+/** The label of the ON/OFF button. */
+export const buttonLabel = (enabled: boolean, t: Texts) => `[ ● ${t.toggle(enabled)} ]`
 
 /** How often the one timer ticks, in milliseconds: the animation's step. */
 export const TICK_MS = 250
@@ -35,14 +37,8 @@ const BLOCK_WIDTH = 3
 /** Below this many columns the checklist drops its bars. */
 export const BARS_MIN_COLUMNS = 40
 
-/** The characters a label takes: the longest, `Working`; the others are padded to it so the bars line up. */
-const LABEL_WIDTH = 7
-
 /** The most characters of an activity's name. */
 const NAME_MAX = 40
-
-/** The title of a turn whose text leaves nothing to name it by. */
-const DEFAULT_TITLE = 'Working on your request'
 
 type Checklist = ClaudeRadarState['checklist']
 
@@ -103,8 +99,8 @@ const clean = (text: string) => {
   return (space > 0 ? head.slice(0, space) : named.slice(0, NAME_MAX)).replace(/[\s:;,\-–]+$/, '')
 }
 
-/** The short name of an activity: paths and code taken out, 40 characters at most; `Working on it` when nothing valid is left. */
-export const normalizeActivity = (text: string) => clean(text) || 'Working on it'
+/** The short name of an activity: paths and code taken out, 40 characters at most; empty when nothing valid is left (the drawing puts `Working on it`, in its language, in its place). */
+export const normalizeActivity = (text: string) => clean(text)
 
 /** The progress bar of 10 segments: `percent` (0 to 100) fills it; `null` moves a block of 3 along it with `tick`. */
 export const bar = (percent: number | null, tick: number) => {
@@ -122,7 +118,7 @@ export const bar = (percent: number | null, tick: number) => {
 /** A new turn: working from `now`, nothing kept of the last one, its title made from the prompt. */
 export const startTurn = (state: ClaudeRadarState, text: string, now: number): ClaudeRadarState =>
   patchChecklist(state, {
-    title: clean(text) || DEFAULT_TITLE,
+    title: clean(text) || null,
     phase: 'working',
     tasks: [],
     needsYouReason: null,
@@ -134,8 +130,7 @@ export const startTurn = (state: ClaudeRadarState, text: string, now: number): C
 /** The end of a turn: answered is done, interrupted is stopped, an error or a refusal is stuck. Tasks still active stay as they were. */
 export const finishTurn = (state: ClaudeRadarState, reason: TurnReason, now: number): ClaudeRadarState => {
   const phase: AgentPhase = reason === 'answer' ? 'done' : reason === 'aborted' ? 'stopped' : 'stuck'
-  const stuckReason =
-    reason === 'error' ? 'The turn ended with an error' : reason === 'refusal' ? 'The model declined to answer' : null
+  const stuckReason: ReasonCode | null = reason === 'error' ? 'error' : reason === 'refusal' ? 'refusal' : null
 
   return patchChecklist(state, { phase, needsYouReason: null, stuckReason, finishedAt: now })
 }
@@ -209,7 +204,7 @@ export const updateTask = (
 
 /** Claude waits for the person's permission; only while the turn is working. */
 export const askUser = (state: ClaudeRadarState): ClaudeRadarState =>
-  state.checklist.phase === 'working' ? patchChecklist(state, { phase: 'needsYou', needsYouReason: 'Waiting for your permission' }) : state
+  state.checklist.phase === 'working' ? patchChecklist(state, { phase: 'needsYou', needsYouReason: 'permission' }) : state
 
 /** Back to work after a wait for the person; anything else stays as it is. */
 export const resumeWork = (state: ClaudeRadarState): ClaudeRadarState =>
@@ -250,23 +245,25 @@ export type TaskRow = {
 }
 
 const MARKS = { done: '✓', active: '▶', upcoming: '○' } as const
-const LABELS = { done: 'Done', active: 'Working', upcoming: 'Next' } as const
+
+/** The characters a task's label takes: the longest of the language's three; the others are padded to it so the bars line up. */
+const labelWidthOf = (t: Texts) => Math.max(...Object.values(t.task).map(label => label.length))
 
 /** The row of a task: a full bar when done, the real percentage or the moving block when active, an empty one when it waits. */
-export const rowOf = (task: ChecklistTask, tick: number): TaskRow => ({
+export const rowOf = (task: ChecklistTask, tick: number, t: Texts): TaskRow => ({
   mark: MARKS[task.status],
-  name: task.name,
+  name: task.name || t.workingOnIt,
   bar: task.status === 'done' ? bar(100, tick) : task.status === 'active' ? bar(task.percent, tick) : bar(0, tick),
-  label: LABELS[task.status].padEnd(LABEL_WIDTH),
+  label: t.task[task.status].padEnd(labelWidthOf(t)),
   status: task.status
 })
 
 /** The rows to draw: the tasks, or, when there are none and the agent is working, the one line that says so. */
-export const rowsOf = (checklist: Checklist, tick: number): TaskRow[] => {
-  if (checklist.tasks.length > 0) return checklist.tasks.map(task => rowOf(task, tick))
+export const rowsOf = (checklist: Checklist, tick: number, t: Texts): TaskRow[] => {
+  if (checklist.tasks.length > 0) return checklist.tasks.map(task => rowOf(task, tick, t))
   if (checklist.phase !== 'working') return []
 
-  return [rowOf({ id: 'request', name: DEFAULT_TITLE, status: 'active', percent: null, hasReported: false }, tick)]
+  return [rowOf({ id: 'request', name: t.defaultTitle, status: 'active', percent: null, hasReported: false }, tick, t)]
 }
 
 /** How the rows fit `bodyColumns`: whether the bars show, and how many columns a name may take. Nothing is wider than the block's inner width (`bodyColumns` less border and padding). */
@@ -274,7 +271,8 @@ export const layoutOf = (rows: readonly TaskRow[], bodyColumns: number) => {
   const inner = Math.max(0, bodyColumns - 4)
   const showBars = bodyColumns >= BARS_MIN_COLUMNS
   // The mark and its space, the gap and the bar, the gap and the label.
-  const fixed = 2 + (showBars ? 2 + BAR_WIDTH : 0) + 2 + LABEL_WIDTH
+  const labelWidth = rows.reduce((most, row) => Math.max(most, row.label.length), 0)
+  const fixed = 2 + (showBars ? 2 + BAR_WIDTH : 0) + 2 + labelWidth
   const longest = rows.reduce((most, row) => Math.max(most, row.name.length), 1)
 
   return { showBars, nameWidth: Math.max(1, Math.min(longest, inner - fixed)) }
@@ -336,31 +334,31 @@ export const spawnSubagent = (state: ClaudeRadarState, spawn: SubagentSpawn, now
 const TEST_COMMAND = /(?<![a-z])(?:test|jest|vitest|pytest)/i
 
 /** What a tool call says about the work, in plain words and never a path, a command or code; `null` for a tool the radar does not know, so the activity stays as it was. */
-export const activityOf = (tool: string, command?: string): string | null => {
+export const activityOf = (tool: string, command?: string): ActivityCode | null => {
   switch (tool) {
     case 'Read':
-      return 'Reading project files'
+      return 'reading'
     case 'Glob':
     case 'Grep':
     case 'WebSearch':
     case 'WebFetch':
-      return 'Searching project information'
+      return 'searching'
     case 'Edit':
     case 'Write':
     case 'NotebookEdit':
-      return 'Updating project files'
+      return 'updating'
     case 'Bash':
-      return TEST_COMMAND.test(command ?? '') ? 'Running tests' : 'Running a command'
+      return TEST_COMMAND.test(command ?? '') ? 'testing' : 'command'
     case 'Agent':
     case 'Task':
-      return 'Delegating work'
+      return 'delegating'
     default:
       return null
   }
 }
 
 /** A call of the subagent's own: its activity becomes `activity` (kept when `null`), and a wait or a finish is over, the agent is working again. An agent not followed changes nothing. */
-export const workSubagent = (state: ClaudeRadarState, id: string, activity: string | null): ClaudeRadarState => {
+export const workSubagent = (state: ClaudeRadarState, id: string, activity: ActivityCode | null): ClaudeRadarState => {
   if (!isKnown(state, id)) return state
 
   const agent = state.subagents[id]!
@@ -417,7 +415,6 @@ export const pruneFinished = (state: ClaudeRadarState, now: number): ClaudeRadar
 export const activeCount = (subagents: Subagents) => Object.values(subagents).filter(agent => isActive(agent.status)).length
 
 const SUBAGENT_MARKS = { working: '●', needsYou: '●', done: '✓', failed: '✗', stopped: '■' } as const
-const SUBAGENT_LABELS = { working: 'Working', needsYou: 'Needs you', done: 'Done', failed: 'Failed', stopped: 'Stopped' } as const
 
 /** The subagents in start order, each with its depth. A hierarchy shows only where `parentId` names an agent still listed: its children follow it, one level in; otherwise the list is flat. */
 const orderedSubagents = (subagents: Subagents): { agent: SubagentState; depth: number }[] => {
@@ -456,29 +453,24 @@ const orderedSubagents = (subagents: Subagents): { agent: SubagentState; depth: 
 /** The id of the detail pane (1-64 of letters, digits, `_`, `-`). */
 export const PANE_ID = 'agent-radar'
 
-/** The pane's title. */
-export const PANE_TITLE = 'Claude Radar'
-
 /** The body rows and the columns the pane asks for. */
 export const PANE_ROWS = 14
 export const PANE_COLUMNS = 60
 
 /** The label of the band's detail button. */
-export const paneButtonLabel = (isOpen: boolean) => `[ ◧ ${isOpen ? 'Close' : 'Detail'} ]`
-
-const PHASE_LABELS = { working: 'Working', needsYou: 'Needs you', stuck: 'Stuck', stopped: 'Stopped', done: 'All done' } as const
+export const paneButtonLabel = (isOpen: boolean, t: Texts) => `[ ◧ ${isOpen ? t.close : t.detail} ]`
 
 /** The pane's `Now` block: the turn's title, its phase with the reason, and its time (frozen once it ended). */
 export type PaneNow = {
   title: string
   label: string
-  /** Why it waits or is stuck (`Waiting for your permission`, ...); null when there is no reason to give. */
+  /** Why it waits or is stuck, in words; null when there is no reason to give. */
   reason: string | null
   time: string
   tone: AgentPhase
 }
 
-/** A subagent in the pane: live or finished, with the whole task (one line, tidied) and the activity. */
+/** A subagent in the pane: live or finished, with the whole task (one line, tidied) and the activity, in words. */
 export type PaneAgent = {
   id: string
   mark: '●' | '✓' | '✗' | '■'
@@ -492,28 +484,35 @@ export type PaneAgent = {
 }
 
 /** The pane's row of a subagent. */
-const paneAgentOf = (agent: SubagentState, now: number, depth: number): PaneAgent => ({
+const paneAgentOf = (agent: SubagentState, now: number, depth: number, t: Texts): PaneAgent => ({
   id: agent.id,
   mark: SUBAGENT_MARKS[agent.status],
   status: agent.status,
   name: agent.name,
   time: elapsed((agent.finishedAt ?? now) - agent.startedAt),
   task: (agent.task === null ? '' : tidy(agent.task)) || null,
-  activity: agent.activity ?? 'Working',
-  label: SUBAGENT_LABELS[agent.status],
+  activity: agent.activity === null ? t.working : t.activity[agent.activity],
+  label: t.agent[agent.status],
   depth
 })
 
-/** What the detail pane draws, from the state alone: the turn (`Now`) and its whole checklist, the subagents at work with their hierarchy, and the history of the finished ones, the most recent first. `isEmpty` when there is nothing at all. */
-export const paneOf = (state: ClaudeRadarState, now: number, tick: number) => {
+/** The reason the turn waits or is stuck, in words; null in any other phase. */
+const reasonOf = (checklist: Checklist, t: Texts) => {
+  const code = checklist.phase === 'needsYou' ? checklist.needsYouReason : checklist.phase === 'stuck' ? checklist.stuckReason : null
+
+  return code === null ? null : t.reason[code]
+}
+
+/** What the detail pane draws, from the state alone and in the language of `t`: the turn (`Now`) and its whole checklist, the subagents at work with their hierarchy, and the history of the finished ones, the most recent first. `isEmpty` when there is nothing at all. */
+export const paneOf = (state: ClaudeRadarState, now: number, tick: number, t: Texts) => {
   const { checklist } = state
   const hasTurn = checklist.startedAt !== null
 
   const current: PaneNow | null = hasTurn
     ? {
-        title: checklist.title || DEFAULT_TITLE,
-        label: PHASE_LABELS[checklist.phase],
-        reason: checklist.phase === 'needsYou' ? checklist.needsYouReason : checklist.phase === 'stuck' ? checklist.stuckReason : null,
+        title: checklist.title ?? t.defaultTitle,
+        label: t.phase[checklist.phase],
+        reason: reasonOf(checklist, t),
         time: elapsed((checklist.finishedAt ?? now) - checklist.startedAt!),
         tone: checklist.phase
       }
@@ -522,13 +521,13 @@ export const paneOf = (state: ClaudeRadarState, now: number, tick: number) => {
   // A finished one stays listed for a moment but is already in the history: the live list is the ones at work.
   const live = orderedSubagents(state.subagents)
     .filter(({ agent }) => isActive(agent.status))
-    .map(({ agent, depth }) => paneAgentOf(agent, now, depth))
-  const history = state.history.map(agent => paneAgentOf(agent, now, 0))
+    .map(({ agent, depth }) => paneAgentOf(agent, now, depth, t))
+  const history = state.history.map(agent => paneAgentOf(agent, now, 0, t))
 
   return {
     isEmpty: !hasTurn && live.length === 0 && history.length === 0,
     now: current,
-    tasks: hasTurn ? rowsOf(checklist, tick) : [],
+    tasks: hasTurn ? rowsOf(checklist, tick, t) : [],
     live,
     history
   }

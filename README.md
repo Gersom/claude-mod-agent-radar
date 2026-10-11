@@ -27,7 +27,7 @@ Claude Radar                                    [ ◧ Detail ] [ ● Claude Rada
 
 ### El panel de detalle
 
-Con el radar en `ON` y Claude trabajando (el texto de la interfaz está en inglés; este README, en español):
+Con el radar en `ON` y Claude trabajando (en inglés, el idioma por defecto; ver «Idioma»):
 
 ```text
 Now
@@ -57,6 +57,41 @@ History                                       1
 El motor coloca un panel que abre el plugin sin que nadie lo pida solo desde 144 columnas de terminal; uno abierto por una pulsación se coloca con cualquier ancho. Por eso la apertura sale siempre de una pulsación. Si la superficie no coloca paneles, el mod muestra el aviso `The detail pane is not available here` y no deja ningún panel esperando.
 
 Se cierra con el mismo botón (`[ ◧ Close ]`) o con la marca o la tecla de cierre del propio panel; entonces el botón vuelve a `Detail`. Apagar el radar (`OFF`) también lo cierra.
+
+## Idioma
+
+La interfaz habla español o inglés, con diccionarios fijos en `hooks/i18n.ts`: ningún agente traduce nada, no hay llamadas a modelos y no consume tokens. **No hay botón ni comando de idioma**: se detecta solo.
+
+- **Automático:** lee `settings.language` (`$.settings.read()`) una vez por carga del mod y otra vez en cada sesión nueva (`session.end` lo olvida), y lo guarda en el estado (`claudeRadarLang`). Si cambias el ajuste a mitad de una sesión, no se recarga hasta la siguiente. Es texto libre, así que reconoce el español en varias formas (`Español`, `spanish`, `es`, `es-MX`, `castellano`, sin importar mayúsculas ni tildes).
+- **Por defecto, inglés:** si no hay `settings.language`, no se puede leer o nombra un idioma que el mod no tiene, va en inglés.
+- **El nombre propio no se traduce:** «Claude Radar» es igual en ambos idiomas.
+- **Lo que viene del texto de la persona o de los agentes no se traduce:** el título del turno, los nombres de las tareas, los nombres de los agentes y las tareas delegadas se muestran tal cual.
+- **El estado no guarda frases:** las razones (`permission`, `error`, `refusal`) y las actividades (`reading`, `searching`, `updating`, `testing`, `command`, `delegating`) son códigos, y el título por defecto y los nombres vacíos son `null` o vacío; el dibujo los pone en palabras en el idioma vigente.
+- **Agregar otro idioma:** un diccionario más en `TEXTS` (`hooks/i18n.ts`), su código en `Lang` (`types/index.d.ts`) y cómo se reconoce en `detectLang`.
+
+Con `settings.language` en español, la banda y el panel se ven así:
+
+```
+Claude Radar                                    [ ◧ Detalle ] [ ● Claude Radar: ON ]
+```
+
+```text
+Ahora
+Build my landing page
+Trabajando                               2m 35s
+✓ Analyze project structure  ██████████  Hecho
+▶ Implement authentication   ███░░░░░░░  En curso
+○ Run final tests            ░░░░░░░░░░  Siguiente
+
+Subagentes                             2 activos
+● frontend-developer                     1m 20s
+  Building the login components
+  Leyendo archivos del proyecto         Trabajando
+
+Historial                                     1
+✗ code-reviewer                             45s
+  Falló · Reviewing the diff
+```
 
 ## Qué muestra el panel
 
@@ -144,8 +179,8 @@ El mod solo observa eventos y dibuja:
 - **Tipo:** hook (plugin de Claude Code).
 - **Eventos:** `session.start`, `session.end` (borra el estado de la sesión), `ui.close` del panel de detalle, `turn.start`, `turn.complete`, `tool.call`, `tool.check` (para `Needs you`: solo cuenta una pregunta de origen `engine`), `agent.spawn`.
 - **Dibujo:** `ui.render` sobre `AbovePrompt` (la banda), sobre `Pane` con `requestId` `agent-radar` (el panel de detalle) y sobre las cuatro filas técnicas. El panel se abre y cierra con `$.ui.open` / `$.ui.close`.
-- **Estado:** `$.state` con tres claves: `claudeRadarState` (todo el estado, el historial incluido), `claudeRadarHidesTools` (si las filas están ocultas; aparte para que la transcripción se redibuje al cambiar de fase y no en cada tic) y `claudeRadarPaneOpen` (si el panel está abierto, para el botón y el temporizador).
-- **Almacén y reloj:** `$.store` (clave `enabled`), `$.clock.now()`, `$.clock.every(250, …)` y `$.clock.after(5000, …)`.
+- **Estado:** `$.state` con cuatro claves: `claudeRadarState` (todo el estado, el historial incluido), `claudeRadarHidesTools` (si las filas están ocultas; aparte para que la transcripción se redibuje al cambiar de fase y no en cada tic), `claudeRadarPaneOpen` (si el panel está abierto, para el botón y el temporizador) y `claudeRadarLang` (el idioma, o `null` hasta que se lee).
+- **Almacén, ajustes y reloj:** `$.store` (clave `enabled`), `$.settings.read()` (clave `language`), `$.clock.now()`, `$.clock.every(250, …)` y `$.clock.after(5000, …)`.
 
 ## Instalación
 
@@ -198,10 +233,12 @@ agent-radar/
 │   └── marketplace.json         # marketplace de un solo plugin (instalación suelta)
 ├── hooks/
 │   ├── hooks.json               # apunta a register.tsx
-│   ├── register.tsx             # hooks, átomos y todo uso de $: la banda mínima, el panel de detalle y las filas ocultas
+│   ├── register.tsx             # hooks, átomos y todo uso de $: la banda mínima, el panel de detalle, el idioma y las filas ocultas
+│   ├── i18n.ts                  # textos en español e inglés y detección del idioma (lógica pura)
+│   ├── i18n.test.ts             # tests de la detección y de los diccionarios
 │   ├── claude-radar.tsx         # lógica pura: reducers, historial, barras, tiempos, ocultación, vista del panel de detalle
 │   └── claude-radar.test.ts     # tests (lógica y render)
-└── types/index.d.ts             # contrato del estado ($.state): ClaudeRadarState, SubagentState, claudeRadarHidesTools, claudeRadarPaneOpen
+└── types/index.d.ts             # contrato del estado ($.state): ClaudeRadarState, SubagentState, Lang, claudeRadarHidesTools, claudeRadarPaneOpen, claudeRadarLang
 ```
 
 `tsconfig.json` y `.claude-plugin/types/` los genera Claude Code al cargar el mod y están en `.gitignore`.
@@ -221,6 +258,7 @@ agent-radar/
 
 Lo que **no se pudo verificar** contra el Claude Code real (los tests usan el kit simulado del motor):
 
+- **Idioma:** `settings.language` es texto libre y solo se reconoce el español; cualquier otro valor va en inglés. El motivo que acompaña al aviso «el panel no está disponible» lo da el motor con sus propias palabras (en inglés) y no se traduce. Las dos traducciones las comprueban los tests con ajustes simulados, no con un `settings.read` real.
 - **Sin abrir el panel no se ve el progreso.** Es una decisión (ver «Cómo se abre el panel»), no una carencia: un panel abierto por el mod no se colocaría bajo 144 columnas.
 - **Dónde se acopla el panel** (a un lado de la transcripción o sobre el prompt) y cómo se ve con `rows: 14` / `columns: 60`; que `isPlaced` sea `false` en las superficies sin soporte (solo se probó con un `ui.open` simulado).
 - **Cierre por el usuario:** el hook `ui.close` que devuelve el botón a `Detail` no se pudo ejercitar con el kit (el `$` de los tests no puede cerrar paneles ni simular a la persona), así que se apoya en lo que dicen los tipos. Si el motor no entregara ese evento, el botón seguiría en `Close`; una pulsación llamaría a un cierre sobre un panel ya cerrado, que el motor ignora, y volvería a `Detail`.

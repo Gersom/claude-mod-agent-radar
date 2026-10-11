@@ -1,13 +1,12 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { ClaudeRadarState } from '../types'
+import type { ClaudeRadarState, Lang } from '../types'
 
 import {
   PANE_COLUMNS,
   PANE_ID,
   PANE_ROWS,
-  PANE_TITLE,
   RETIRE_MS,
   STATUS_MIN_COLUMNS,
   TICK_MS,
@@ -37,6 +36,7 @@ import {
   writeTodos
 } from './claude-radar'
 import type { PaneAgent } from './claude-radar'
+import { NAME, detectLang, textsOf } from './i18n'
 
 /** The key of `$.store` that keeps the ON/OFF choice between sessions. */
 const STORE_KEY = 'enabled'
@@ -70,6 +70,34 @@ const hideTools = atom({ plugin: 'agent-radar', key: 'claudeRadarHidesTools' } a
 
 /** Whether the detail pane is open: set when the button opens it, cleared when it closes, whoever closes it. */
 const paneOpen = atom({ plugin: 'agent-radar', key: 'claudeRadarPaneOpen' } as const, false)
+
+/** The radar's language, settled from settings.language the first time (and again in a new session); `null` until then. */
+const langMode = atom({ plugin: 'agent-radar', key: 'claudeRadarLang' } as const, null as Lang | null)
+
+/** The language settings.language names; the default when the settings cannot be read or name none the radar has. */
+const readLang = async ($: EngineInterface) => {
+  let language: unknown
+
+  try {
+    language = (await $.settings.read()).language
+  } catch {
+    // No settings to read: the default language.
+  }
+
+  return detectLang(language)
+}
+
+/** Settles the language once, from the settings; events call it, a draw cannot write. */
+const ensureLang = async ($: EngineInterface) => {
+  if ((await read($, langMode)) !== null) return
+
+  const lang = await readLang($)
+
+  await update($, langMode, current => current ?? lang)
+}
+
+/** The words of the language in force. Before an event settled it a draw reads the settings itself, without writing. */
+const textsFor = async ($: EngineInterface) => textsOf((await read($, langMode)) ?? (await readLang($)))
 
 /** Applies `fn` to the radar's state and keeps `hideTools` in step with it, written only when it changes. */
 const change = async ($: EngineInterface, fn: (state: ClaudeRadarState) => ClaudeRadarState) => {
@@ -147,7 +175,7 @@ const togglePane = async ($: EngineInterface, isOpen: boolean) => {
   // `isOpen` is what the band drew, so the open call below is the handler's first await and the engine still sees it as the person's own press.
   if (isOpen) return closePane($)
 
-  const opened = await $.ui.open({ id: PANE_ID, title: PANE_TITLE, rows: PANE_ROWS, columns: PANE_COLUMNS })
+  const opened = await $.ui.open({ id: PANE_ID, title: NAME, rows: PANE_ROWS, columns: PANE_COLUMNS })
 
   if (opened.isPlaced) {
     await update($, paneOpen, () => true)
@@ -156,7 +184,7 @@ const togglePane = async ($: EngineInterface, isOpen: boolean) => {
   } else {
     // Open but undrawn: leave nothing waiting to pop up later on its own.
     await $.ui.close({ id: PANE_ID })
-    $.ui.toast(`The detail pane is not available here: ${opened.reason}`)
+    $.ui.toast((await textsFor($)).paneUnavailable(opened.reason))
   }
 }
 
@@ -175,13 +203,15 @@ const setEnabled = async ($: EngineInterface, enabled: boolean) => {
 
   if (!enabled) stop()
 
-  $.ui.toast(`Claude Radar: ${enabled ? 'ON' : 'OFF'}`)
+  await ensureLang($)
+  $.ui.toast((await textsFor($)).toggle(enabled))
 }
 
 /** Claude Radar: a passive monitor of the main agent and its subagents. It only watches the events go by and draws; nothing it sees is changed. */
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await ensureEnabled($)
+    await ensureLang($)
 
     return next(e)
   })
@@ -190,6 +220,8 @@ export const register: Register = on => {
     stop()
     // A new session starts clean: what was followed, the history included, goes; the ON/OFF choice stays.
     await change($, state => resetSession(state))
+    // The next session reads the language again.
+    await update($, langMode, () => null)
 
     return next(e)
   })
@@ -206,6 +238,8 @@ export const register: Register = on => {
 
   on('turn.start', async ($, e, next) => {
     const time = await $.clock.now()
+
+    await ensureLang($)
 
     await change($, state => startTurn(state, e.text, time))
     await start($)
@@ -345,12 +379,13 @@ export const register: Register = on => {
 
     const { claudeRadarEnabled: enabled } = await read($, radar)
     const isPaneOpen = await read($, paneOpen)
+    const t = await textsFor($)
     const { Box, Button, Text } = $.ui.resolve(e)
 
     // The ON/OFF button stays visible whether the radar is ON or OFF; the detail button only when ON, to its left.
     const toggle = (
       <Button key="toggle" plain dimColor onPress={() => void setEnabled($, !enabled)}>
-        {buttonLabel(enabled)}
+        {buttonLabel(enabled, t)}
       </Button>
     )
 
@@ -359,13 +394,13 @@ export const register: Register = on => {
         <Box>
           <Box flexGrow={1} flexShrink={1}>
             <Text wrap="truncate-end" bold dimColor>
-              {PANE_TITLE}
+              {t.name}
             </Text>
           </Box>
           {enabled ? (
             <Box flexShrink={0} marginLeft={2} marginRight={1}>
               <Button key="pane" plain dimColor onPress={() => void togglePane($, isPaneOpen)}>
-                {paneButtonLabel(isPaneOpen)}
+                {paneButtonLabel(isPaneOpen, t)}
               </Button>
             </Box>
           ) : null}
@@ -384,14 +419,15 @@ export const register: Register = on => {
     const now = await $.clock.now()
     const { Box, Text } = $.ui.resolve(e)
     const columns = e.props.bodyColumns
+    const t = await textsFor($)
 
-    const view = paneOf(state, now, state.tick)
+    const view = paneOf(state, now, state.tick, t)
 
     if (view.isEmpty) {
       return (
         <Box flexDirection="column">
           <Text wrap="truncate-end" dimColor>
-            Nothing running yet
+            {t.nothing}
           </Text>
         </Box>
       )
@@ -455,7 +491,7 @@ export const register: Register = on => {
       <Box flexDirection="column">
         {view.now === null ? null : (
           <Box key="now-block" flexDirection="column">
-            {heading('now', 'Now')}
+            {heading('now', t.now)}
             <Text wrap="truncate-end" bold>
               {view.now.title}
             </Text>
@@ -506,7 +542,7 @@ export const register: Register = on => {
         )}
         {view.live.length === 0 ? null : (
           <Box key="live-block" flexDirection="column">
-            {heading('live', 'Subagents', `${view.live.length} active`)}
+            {heading('live', t.subagents, t.active(view.live.length))}
             {view.live.map(agent => (
               <Box key={`live-${agent.id}`} flexDirection="column" paddingLeft={agent.depth * 2}>
                 {nameLine(agent)}
@@ -517,10 +553,10 @@ export const register: Register = on => {
           </Box>
         )}
         <Box key="history-block" flexDirection="column">
-          {heading('history', 'History', view.history.length === 0 ? undefined : String(view.history.length))}
+          {heading('history', t.history, view.history.length === 0 ? undefined : String(view.history.length))}
           {view.history.length === 0 ? (
             <Text wrap="truncate-end" dimColor>
-              No finished subagents yet
+              {t.noFinished}
             </Text>
           ) : (
             view.history.map(agent => (

@@ -17,13 +17,13 @@ import {
   isLive,
   layoutOf,
   normalizeActivity,
-  paneButtonLabel,
-  paneOf,
+  paneButtonLabel as paneButtonLabelIn,
+  paneOf as paneOfIn,
   pruneFinished,
   recordHistory,
   resetSession,
   resumeWork,
-  rowsOf,
+  rowsOf as rowsOfIn,
   spawnSubagent,
   startTurn,
   taskIdOf,
@@ -31,6 +31,16 @@ import {
   workSubagent,
   writeTodos
 } from './claude-radar'
+import { DEFAULT_LANG, TEXTS, detectLang } from './i18n'
+import type { Texts } from './i18n'
+
+const en = TEXTS.en
+const es = TEXTS.es
+
+// The reducers' views take the words of a language; these read English unless a test says otherwise.
+const paneOf = (state: Parameters<typeof paneOfIn>[0], now: number, tick: number, t: Texts = en) => paneOfIn(state, now, tick, t)
+const rowsOf = (checklist: Parameters<typeof rowsOfIn>[0], tick: number, t: Texts = en) => rowsOfIn(checklist, tick, t)
+const paneButtonLabel = (isOpen: boolean, t: Texts = en) => paneButtonLabelIn(isOpen, t)
 
 const BAND = {
   component: 'AbovePrompt',
@@ -181,9 +191,9 @@ test('normalizeActivity cuts at 40 characters by words and falls back when nothi
   expect(normalizeActivity('a'.repeat(34) + ' bbbbb ccc')).toBe('a'.repeat(34).replace(/^a/, 'A') + ' bbbbb')
   // One word longer than the limit is cut hard.
   expect(normalizeActivity('x'.repeat(60))).toBe('X' + 'x'.repeat(39))
-  expect(normalizeActivity('')).toBe('Working on it')
-  expect(normalizeActivity('   ')).toBe('Working on it')
-  expect(normalizeActivity('`only code` /only/a/path')).toBe('Working on it')
+  expect(normalizeActivity('')).toBe('')
+  expect(normalizeActivity('   ')).toBe('')
+  expect(normalizeActivity('`only code` /only/a/path')).toBe('')
 })
 
 test('bar has 10 segments: a real percentage fills it, none moves a block of 3', async () => {
@@ -222,8 +232,8 @@ test('a turn starts working with a title from the prompt, and nothing kept of th
     startedAt: 9000,
     finishedAt: null
   })
-  expect(startTurn(initialState(), '', 1).checklist.title).toBe('Working on your request')
-  expect(startTurn(initialState(), '`code` /a/b', 1).checklist.title).toBe('Working on your request')
+  expect(startTurn(initialState(), '', 1).checklist.title).toBeNull()
+  expect(startTurn(initialState(), '`code` /a/b', 1).checklist.title).toBeNull()
   // Only the checklist changes.
   expect(state.claudeRadarEnabled).toBe(before.claudeRadarEnabled)
   expect(state.tick).toBe(before.tick)
@@ -241,11 +251,11 @@ test('a turn ends done, stopped or stuck, and active tasks are left as they were
   expect(finishTurn(working, 'aborted', 4000).checklist).toMatchObject({ phase: 'stopped', stuckReason: null })
   expect(finishTurn(working, 'error', 4000).checklist).toMatchObject({
     phase: 'stuck',
-    stuckReason: 'The turn ended with an error'
+    stuckReason: 'error'
   })
   expect(finishTurn(working, 'refusal', 4000).checklist).toMatchObject({
     phase: 'stuck',
-    stuckReason: 'The model declined to answer'
+    stuckReason: 'refusal'
   })
 
   const waiting = askUser(working)
@@ -317,7 +327,7 @@ test('asking the person marks the working turn, and work lifts it; nothing else 
   const working = startTurn(initialState(), 'go', 0)
   const waiting = askUser(working)
 
-  expect(waiting.checklist).toMatchObject({ phase: 'needsYou', needsYouReason: 'Waiting for your permission' })
+  expect(waiting.checklist).toMatchObject({ phase: 'needsYou', needsYouReason: 'permission' })
   expect(resumeWork(waiting).checklist).toMatchObject({ phase: 'working', needsYouReason: null })
 
   const done = finishTurn(working, 'answer', 5)
@@ -1070,10 +1080,10 @@ test('runs of the same agent are independent entries, and a repeated id changes 
   let state = spawned(initialState(), 'a1', 'code-reviewer', 1000)
 
   state = spawned(state, 'a2', 'code-reviewer', 2000)
-  state = workSubagent(state, 'a1', 'Reading project files')
+  state = workSubagent(state, 'a1', 'reading')
 
   expect(Object.keys(state.subagents)).toEqual(['a1', 'a2'])
-  expect(state.subagents['a1']?.activity).toBe('Reading project files')
+  expect(state.subagents['a1']?.activity).toBe('reading')
   expect(state.subagents['a2']?.activity).toBeNull()
   expect(state.subagents['a1']?.name).toBe(state.subagents['a2']?.name)
   expect(spawned(state, 'a1', 'other', 9000)).toBe(state)
@@ -1113,18 +1123,18 @@ test('the parent is kept only when the spawn names one, and the hierarchy shows 
 })
 
 test('the activity comes from the tool, in plain words and never a path or a command', async () => {
-  expect(activityOf('Read')).toBe('Reading project files')
-  for (const tool of ['Glob', 'Grep', 'WebSearch', 'WebFetch']) expect(activityOf(tool)).toBe('Searching project information')
-  for (const tool of ['Edit', 'Write', 'NotebookEdit']) expect(activityOf(tool)).toBe('Updating project files')
-  for (const tool of ['Agent', 'Task']) expect(activityOf(tool)).toBe('Delegating work')
+  expect(activityOf('Read')).toBe('reading')
+  for (const tool of ['Glob', 'Grep', 'WebSearch', 'WebFetch']) expect(activityOf(tool)).toBe('searching')
+  for (const tool of ['Edit', 'Write', 'NotebookEdit']) expect(activityOf(tool)).toBe('updating')
+  for (const tool of ['Agent', 'Task']) expect(activityOf(tool)).toBe('delegating')
 
   for (const command of ['npm test', 'bun run test', 'npx vitest run', 'pytest -q', 'npx jest', 'npm run test:unit'])
-    expect(activityOf('Bash', command)).toBe('Running tests')
+    expect(activityOf('Bash', command)).toBe('testing')
 
   for (const command of ['ls -la /secret/path', 'git status', 'cat latest.log', ''])
-    expect(activityOf('Bash', command)).toBe('Running a command')
+    expect(activityOf('Bash', command)).toBe('command')
 
-  expect(activityOf('Bash')).toBe('Running a command')
+  expect(activityOf('Bash')).toBe('command')
   expect(activityOf('TodoWrite')).toBeNull()
   expect(activityOf('mcp__x__y')).toBeNull()
 })
@@ -1132,12 +1142,12 @@ test('the activity comes from the tool, in plain words and never a path or a com
 test('a tool call sets the activity; an unknown tool or agent changes nothing', async () => {
   const state = spawned(initialState(), 'a1')
 
-  expect(workSubagent(state, 'a1', 'Updating project files').subagents['a1']?.activity).toBe('Updating project files')
-  expect(workSubagent(workSubagent(state, 'a1', 'Running tests'), 'a1', null).subagents['a1']?.activity).toBe('Running tests')
+  expect(workSubagent(state, 'a1', 'updating').subagents['a1']?.activity).toBe('updating')
+  expect(workSubagent(workSubagent(state, 'a1', 'testing'), 'a1', null).subagents['a1']?.activity).toBe('testing')
   expect(workSubagent(state, 'a1', null)).toBe(state)
-  expect(workSubagent(state, 'nobody', 'Running tests')).toBe(state)
-  expect(workSubagent(state, 'constructor', 'Running tests')).toBe(state)
-  expect(workSubagent(state, 'a1', 'Running tests')).not.toBe(state)
+  expect(workSubagent(state, 'nobody', 'testing')).toBe(state)
+  expect(workSubagent(state, 'constructor', 'testing')).toBe(state)
+  expect(workSubagent(state, 'a1', 'testing')).not.toBe(state)
 })
 
 test('a subagent ends done, stopped or failed with its time frozen; the first end stands, a new call revives it', async () => {
@@ -1155,7 +1165,7 @@ test('a subagent ends done, stopped or failed with its time frozen; the first en
   expect(finishSubagent(done, 'a1', 'error', 9000)).toBe(done)
   expect(paneOf(done, 999_000, 0).history[0]?.time).toBe('3s')
 
-  const back = workSubagent(done, 'a1', 'Reading project files')
+  const back = workSubagent(done, 'a1', 'reading')
 
   expect(back.subagents['a1']).toMatchObject({ status: 'working', finishedAt: null })
   // The main turn is not touched by any of it.
@@ -1502,6 +1512,206 @@ test('a nested subagent shows under its parent only when the spawn names a paren
   await ui.unmount()
 })
 
+// Settings that say Spanish: the radar speaks it.
+const spanish = () => ({ value: { language: 'Español' } }) as never
+
+test('with settings.language in Spanish the band and the pane speak Spanish, names and titles untouched', async ($, on) => {
+  squad(on, 'a1', 'a2')
+  on('settings.read', spanish)
+  on('tool.check', () => ({ decision: 'ask' }) as never)
+
+  await $.session.start({ cwd: '/work', surface: 'terminal', isInteractive: true })
+  await begin($, 'Build my landing page')
+  await $.tool.call({ tool: 'TodoWrite', todos: todos(['Analyze structure', 'completed'], ['Implement it', 'in_progress'], ['Run tests', 'pending']) })
+  await spawn($, 'frontend-developer', 'Building login components')
+  await spawn($, 'code-reviewer', 'Reviewing the diff')
+  await $.tool.call({ tool: 'Read', file_path: 'x', agentId: 'a1' } as never)
+  await finish($, 'error', 'a2')
+
+  const ui = await band($)
+
+  // The proper name stays; the buttons speak Spanish.
+  expect(await textsOf(ui)).toEqual(['Claude Radar'])
+  expect(await ui.find({ type: 'Button', key: 'pane', text: /^\[ ◧ Detalle \]$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Button', key: 'toggle', text: /^\[ ● Claude Radar: ON \]$/ })).toBeDefined()
+  await ui.unmount()
+
+  const pane = await paneView($)
+
+  for (const text of [/^Ahora$/, /^Trabajando$/, /^Hecho\s*$/, /^En curso\s*$/, /^Siguiente\s*$/, /^Subagentes$/, /^1 activo$/, /^Historial$/]) {
+    expect(await pane.find({ type: 'Text', text })).toBeDefined()
+  }
+  expect(await pane.find({ type: 'Text', text: /^Leyendo archivos del proyecto$/ })).toBeDefined()
+  expect(await pane.find({ type: 'Text', text: /^Falló · Reviewing the diff$/ })).toBeDefined()
+  // What comes from the person's text or the agents' own names is not translated.
+  for (const text of [/^Build my landing page$/, /^Analyze structure$/, /^frontend-developer$/, /^Building login components$/, /^code-reviewer$/]) {
+    expect(await pane.find({ type: 'Text', text })).toBeDefined()
+  }
+  // None of the English words is left.
+  expect(await pane.find({ type: 'Text', text: /^(Now|Working|Done|Next|Subagents|History|Failed)\b/ })).toBeUndefined()
+  await pane.unmount()
+})
+
+test('the phases and their reasons are put in Spanish when drawn, from codes the state keeps', async ($, on) => {
+  radar(on)
+  on('settings.read', spanish)
+  on('tool.check', () => ({ decision: 'ask' }) as never)
+  on('tool.call', () => answered({ stdout: '' }))
+  await $.session.start({ cwd: '/work', surface: 'terminal', isInteractive: true })
+
+  const pane = await paneView($)
+
+  expect(await pane.find({ type: 'Text', text: /^Aún no hay nada en marcha$/ })).toBeDefined()
+
+  await begin($, '')
+  expect(await pane.find({ type: 'Text', text: /^Trabajando en tu petición$/ })).toBeDefined()
+
+  await $.tool.check({ tool: 'Bash', input: { command: 'rm x' } })
+  expect(await pane.find({ type: 'Text', text: /^Te necesita$/ })).toBeDefined()
+  expect(await pane.find({ type: 'Text', text: /Esperando tu permiso/ })).toBeDefined()
+  expect(await pane.find({ type: 'Text', text: /^Aún no hay subagentes terminados$/ })).toBeDefined()
+
+  await finish($, 'error')
+  expect(await pane.find({ type: 'Text', text: /^Atascado$/ })).toBeDefined()
+  expect(await pane.find({ type: 'Text', text: /El turno terminó con un error/ })).toBeDefined()
+
+  await begin($)
+  await finish($, 'refusal')
+  expect(await pane.find({ type: 'Text', text: /El modelo se negó a responder/ })).toBeDefined()
+
+  await begin($)
+  await finish($, 'aborted')
+  expect(await pane.find({ type: 'Text', text: /^Detenido$/ })).toBeDefined()
+
+  await begin($)
+  await finish($)
+  expect(await pane.find({ type: 'Text', text: /^Todo listo$/ })).toBeDefined()
+  await pane.unmount()
+})
+
+test('a task with no valid text is named in the language when drawn', async ($, on) => {
+  radar(on)
+  on('tool.call', () => answered({ oldTodos: [], newTodos: [] }))
+
+  await begin($)
+  await $.tool.call({ tool: 'TodoWrite', todos: todos(['/only/a/path', 'pending']) })
+
+  const english = await paneView($)
+
+  expect(await english.find({ type: 'Text', text: /^Working on it$/ })).toBeDefined()
+  await english.unmount()
+
+  // The state keeps no phrase: the same task reads in the other language too.
+  expect(rowsOf(writeTodos(startTurn(initialState(), 'go', 0), [{ content: '/only/a/path', status: 'pending' }]).checklist, 0, es)[0]?.name).toBe('En ello')
+})
+
+test('the activities are put in Spanish: every one the tools can say', async () => {
+  const state = (activity: Parameters<typeof workSubagent>[2]) => workSubagent(spawned(initialState(), 'a1', 'x', 0, { task: null }), 'a1', activity)
+
+  expect(paneOf(state('reading'), 1, 0, es).live[0]?.activity).toBe('Leyendo archivos del proyecto')
+  expect(paneOf(state('searching'), 1, 0, es).live[0]?.activity).toBe('Buscando información del proyecto')
+  expect(paneOf(state('updating'), 1, 0, es).live[0]?.activity).toBe('Actualizando archivos del proyecto')
+  expect(paneOf(state('testing'), 1, 0, es).live[0]?.activity).toBe('Ejecutando pruebas')
+  expect(paneOf(state('command'), 1, 0, es).live[0]?.activity).toBe('Ejecutando un comando')
+  expect(paneOf(state('delegating'), 1, 0, es).live[0]?.activity).toBe('Delegando trabajo')
+  expect(paneOf(state(null), 1, 0, es).live[0]?.activity).toBe('Trabajando')
+  expect(paneOf(state(null), 1, 0, en).live[0]?.activity).toBe('Working')
+  // The same state, two languages.
+  expect(paneOf(state('testing'), 1, 0, en).live[0]?.activity).toBe('Running tests')
+})
+
+test('without settings, with unreadable settings or with a language the radar lacks, everything is English', async ($, on) => {
+  radar(on)
+  on('settings.read', () => ({ value: { language: 'japanese' } }) as never)
+  await $.session.start({ cwd: '/work', surface: 'terminal', isInteractive: true })
+  await begin($)
+
+  const pane = await paneView($)
+
+  expect(await pane.find({ type: 'Text', text: /^Now$/ })).toBeDefined()
+  expect(await pane.find({ type: 'Text', text: /^Working$/ })).toBeDefined()
+  expect(await pane.find({ type: 'Text', text: /Ahora|Trabajando/ })).toBeUndefined()
+  await pane.unmount()
+
+  const ui = await band($)
+
+  expect(await ui.find({ type: 'Button', key: 'pane', text: /Detail/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('the language is read once per session, kept while it runs, and read again in the next', async ($, on) => {
+  radar(on)
+  on('session.end', () => ({ sessionId: 's' }) as never)
+
+  let reads = 0
+  let language = 'Español'
+
+  on('settings.read', () => {
+    reads++
+
+    return { value: { language } } as never
+  })
+
+  await $.session.start({ cwd: '/work', surface: 'terminal', isInteractive: true })
+  await begin($)
+
+  const pane = await paneView($)
+  const ui = await band($)
+
+  expect(await pane.find({ type: 'Text', text: /^Ahora$/ })).toBeDefined()
+  expect(reads).toBe(1)
+
+  // A change of the setting does not move the session that runs.
+  language = 'English'
+  await finish($)
+  await begin($)
+  expect(await pane.find({ type: 'Text', text: /^Ahora$/ })).toBeDefined()
+  expect(reads).toBe(1)
+  await ui.unmount()
+  await pane.unmount()
+
+  await $.session.end({ sessionId: 's' } as never)
+  await $.session.start({ cwd: '/work', surface: 'terminal', isInteractive: true })
+  await begin($)
+
+  const next = await paneView($)
+
+  expect(await next.find({ type: 'Text', text: /^Now$/ })).toBeDefined()
+  expect(reads).toBe(2)
+  await next.unmount()
+})
+
+test('the toasts speak the language: the ON/OFF change and the pane that cannot be placed', async ($, on) => {
+  const toasts: string[] = []
+  const { calls } = radar(on, undefined, toasts, false)
+
+  on('settings.read', spanish)
+  await $.session.start({ cwd: '/work', surface: 'terminal', isInteractive: true })
+
+  const ui = await band($)
+
+  await ui.press({ key: 'pane' })
+  expect(calls).toEqual(['open agent-radar', 'close agent-radar'])
+  expect(toasts).toEqual(['El panel de detalle no está disponible aquí: no panes here'])
+
+  await ui.press({ key: 'toggle' })
+  await ui.press({ key: 'toggle' })
+  expect(toasts.slice(1)).toEqual(['Claude Radar: OFF', 'Claude Radar: ON'])
+  await ui.unmount()
+})
+
+test('the toasts are in English without a language', async ($, on) => {
+  const toasts: string[] = []
+
+  radar(on, undefined, toasts, false)
+
+  const ui = await band($)
+
+  await ui.press({ key: 'pane' })
+  expect(toasts).toEqual(['The detail pane is not available here: no panes here'])
+  await ui.unmount()
+})
+
 test('hidesTools: only with the radar ON, work going on and nobody waiting for the person', async () => {
   const working = startTurn(initialState(), 'go', 0)
   const withAgent = spawned(initialState(), 'a1')
@@ -1815,7 +2025,7 @@ test('the history keeps 50 at most, drops the oldest, and is not touched by an a
   const busy = spawned(initialState(), 'b1')
 
   expect(busy.history).toEqual([])
-  expect(workSubagent(busy, 'b1', 'Running tests').history).toEqual([])
+  expect(workSubagent(busy, 'b1', 'testing').history).toEqual([])
 })
 
 test('retiring a finished subagent from the band keeps it in the history, once, and a revived one leaves it', async () => {
@@ -1831,7 +2041,7 @@ test('retiring a finished subagent from the band keeps it in the history, once, 
   expect(pruneFinished(ended, 20_000).history.map(agent => agent.id)).toEqual(['x', 'y'])
   expect(pruneFinished(done, 14_999)).toBe(done)
 
-  const back = workSubagent(done, 'a1', 'Reading project files')
+  const back = workSubagent(done, 'a1', 'reading')
 
   expect(back.history).toEqual([])
   expect(finishSubagent(back, 'a1', 'error', 20_000).history.map(agent => [agent.id, agent.status])).toEqual([['a1', 'failed']])
@@ -1856,7 +2066,7 @@ test('the pane rows read the status: mark, label, activity (or Working) and whol
   const base = spawned(initialState(), 'a1', 'x', 0)
 
   expect(row(base)).toBe('● Working | Working | 1m 20s')
-  expect(row(workSubagent(base, 'a1', 'Reading project files'))).toBe('● Working | Reading project files | 1m 20s')
+  expect(row(workSubagent(base, 'a1', 'reading'))).toBe('● Working | Reading project files | 1m 20s')
   expect(row(askSubagent(base, 'a1'))).toBe('● Needs you | Working | 1m 20s')
   expect(row(finishSubagent(base, 'a1', 'answer', 5000))).toBe('✓ Done | Working | 5s')
   expect(row(finishSubagent(base, 'a1', 'error', 5000))).toBe('✗ Failed | Working | 5s')
@@ -1876,7 +2086,7 @@ test('the pane view has the turn, its whole checklist, the subagents at work wit
 
   state = spawned(state, 'a1', 'lead', 2000, { task: 'Review the login flow in /src/auth and the refresh token handling of the session store' })
   state = spawned(state, 'a2', 'helper', 3000, { parentId: 'a1', task: null })
-  state = workSubagent(state, 'a2', 'Running tests')
+  state = workSubagent(state, 'a2', 'testing')
   state = finishedAgent(state, 'a3', 4000)
 
   const view = paneOf(state, 61_000, 0)
