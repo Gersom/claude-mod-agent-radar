@@ -4,5 +4,7 @@
   "author": { "name": "Gersom" },
   "description": "Monitor visual y pasivo del agente principal y sus subagentes sobre el prompt, sin llamadas extra a modelos.",
   "license": "MIT",
+  "repository": "https://github.com/Gersom/claude-mod-agent-radar",
+  "homepage": "https://github.com/Gersom/claude-mod-agent-radar",
   "types": "./types/index.d.ts"
 }

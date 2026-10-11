@@ -1650,3 +1650,100 @@ test('the reply and everything else the radar must not touch is drawn by the eng
     await ui.unmount()
   }
 })
+
+test('a whole session of work registers nothing, calls no model and injects nothing into the context', async ($, on) => {
+  const clock = radar(on)
+  const seen: string[] = []
+  let spawns = 0
+
+  // Every way the radar could cost tokens or add to the session: a tool, a command, an agent, a model call, a prompt, a message.
+  for (const event of ['tool.register', 'command.register', 'agent.register', 'model.complete', 'prompt.submit', 'session.send', 'session.compact']) {
+    ;(on as any)(event, () => {
+      seen.push(event)
+
+      return {} as never
+    })
+  }
+
+  on('agent.spawn', () => ({ model: 'm', agentId: `a${++spawns}` }))
+  on('tool.call', () => answered({ oldTodos: [], newTodos: [] }))
+  on('tool.check', () => ({ decision: 'ask' }) as never)
+  on('prompt.compose', () => ({ sections: [{ id: 'base', text: 'SYSTEM', scope: 'shared' }] }) as never)
+  on('prompt.context', () => ({ blocks: [{ name: 'currentDate', text: 'today' }] }) as never)
+
+  await $.session.start({ cwd: '/work', surface: 'terminal', isInteractive: true })
+  await begin($)
+  await $.tool.call({ tool: 'TodoWrite', todos: todos(['Step', 'in_progress']) })
+  await $.tool.call({ tool: 'TaskCreate', subject: 'Another', description: 'd' })
+  await spawn($, 'frontend-developer')
+  await spawn($, 'frontend-developer')
+  await $.tool.call({ tool: 'Bash', command: 'npm test', agentId: 'a1' } as never)
+  await $.tool.check({ tool: 'Bash', input: { command: 'rm x' }, agentId: 'a2' } as never)
+  await finish($, 'answer', 'a1')
+
+  const band = await $.ui.mount({ plugin: 'agent-radar', surface: 'terminal', ...BAND })
+
+  await band.press({ key: 'toggle' })
+  await band.press({ key: 'toggle' })
+  await finish($)
+  await clock.advance(10 * MS)
+  await band.unmount()
+
+  // Only the two spawns the test itself made, and nothing else of the list.
+  expect(spawns).toBe(2)
+  expect(seen).toEqual([])
+  // What the model would read, as the layers beneath made it: untouched by the radar.
+  expect(await $.prompt.compose({} as never)).toEqual({ sections: [{ id: 'base', text: 'SYSTEM', scope: 'shared' }] })
+  expect(await $.prompt.context({ blocks: [] } as never)).toEqual({ blocks: [{ name: 'currentDate', text: 'today' }] })
+})
+
+test('the timer stops when nothing is left to move', async ($, on) => {
+  const clock = squad(on, 'a1')
+  let writes = 0
+
+  ;(on as any)('state.set', (_: unknown, e: { key: string }, next: (e: unknown) => unknown) => {
+    if (e.key === 'claudeRadarState') writes++
+
+    return next(e)
+  })
+
+  await begin($)
+  await spawn($, 'frontend-developer')
+  await clock.advance(2 * MS)
+  expect(writes).toBeGreaterThan(0)
+
+  await finish($, 'answer', 'a1')
+  await finish($)
+  // Both are over and folded or retired after 5 seconds; nothing writes the state from then on.
+  await clock.advance(6 * MS)
+
+  const settled = writes
+
+  await clock.advance(60 * MS)
+  expect(writes).toBe(settled)
+})
+
+test('a subagent with no task and no tool seen shows Working', async ($, on) => {
+  squad(on, 'a1')
+  await begin($)
+  await spawn($, 'Explore', '')
+
+  const ui = await mount($)
+
+  expect(await ui.find({ type: 'Text', text: /^Explore$/ })).toBeDefined()
+  expect(await ui.findAll({ type: 'Text', text: /^Working$/ })).toHaveLength(3)
+  await ui.unmount()
+})
+
+test('the subagents draw on the desktop surface too', async ($, on) => {
+  squad(on, 'a1')
+  await begin($)
+  await spawn($, 'frontend-developer')
+
+  const ui = await $.ui.mount({ plugin: 'agent-radar', surface: 'desktop', ...BAND })
+
+  expect(await ui.find({ type: 'Text', text: /^Subagents$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^frontend-developer$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Button', key: 'toggle' })).toBeDefined()
+  await ui.unmount()
+})
