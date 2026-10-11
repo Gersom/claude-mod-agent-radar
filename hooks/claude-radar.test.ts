@@ -146,21 +146,14 @@ test('yields to a survey', async ($, on) => {
   await ui.unmount()
 })
 
-test('registers no slash command', async ($, on) => {
-  const commands: unknown[] = []
-
-  on('command.register', (_: unknown, e: unknown) => {
-    commands.push(e)
-
-    return { value: { command: 'x' } } as never
-  })
-  on('session.start', ($, e) => ({ cwd: e.cwd }))
-  memory(on)
-  mock.clock(on, { now: Date.now() })
+test('registers one slash command, /agent-radar, and no other', async ($, on) => {
+  const { commands } = radar(on)
 
   await $.session.start({ cwd: '/work', surface: 'terminal', isInteractive: true })
 
-  expect(commands).toEqual([])
+  expect(commands).toEqual([{ name: 'agent-radar', description: 'Open or close the Claude Radar detail pane.', argumentHint: '[open|close]' }])
+  expect(commands.map(command => command.name)).not.toContain('radar')
+  expect(commands.map(command => command.name)).not.toContain('simple')
 })
 
 test('elapsed reads seconds, minutes and hours', async () => {
@@ -447,8 +440,14 @@ const isFramed = async (ui: { find: (query: { type: string }) => Promise<{ child
 const radar = (on: any, draw: (...args: any[]) => unknown = () => engineBand, toasts: string[] = [], isPlaced = true) => {
   const calls: string[] = []
   const opened: unknown[] = []
+  const commands: { name: string; description: string; argumentHint?: string }[] = []
 
   on('ui.render', draw)
+  on('command.register', (_: unknown, e: { name: string; description: string; argumentHint?: string }) => {
+    commands.push(e)
+
+    return { value: { command: e.name } } as never
+  })
   on('session.start', ($: unknown, e: { cwd: string }) => ({ cwd: e.cwd }))
   on('turn.start', ($: unknown, e: { turnId: string }) => ({ turnId: e.turnId }))
   on('turn.complete', ($: unknown, e: { answer: string }) => ({ text: e.answer }))
@@ -456,7 +455,7 @@ const radar = (on: any, draw: (...args: any[]) => unknown = () => engineBand, to
   watchToasts(on, toasts)
   panes(on, isPlaced, opened, calls)
 
-  return { ...mock.clock(on, { now: Date.now() }), calls, opened }
+  return { ...mock.clock(on, { now: Date.now() }), calls, opened, commands }
 }
 
 /** A tool answer as the engine gives it (the plugin relays it as it is). */
@@ -1712,6 +1711,140 @@ test('the toasts are in English without a language', async ($, on) => {
   await ui.unmount()
 })
 
+const agentRadar = ($: any, args = '') => $.command.run({ command: 'agent-radar', args })
+
+test('/agent-radar with no argument toggles the pane, and the answer says which way', async ($, on) => {
+  const { calls } = radar(on)
+  const ui = await band($)
+
+  expect(await agentRadar($)).toEqual({ text: 'Detail pane opened' })
+  expect(calls).toEqual(['open agent-radar'])
+  expect(await ui.find({ type: 'Button', key: 'pane', text: /Close/ })).toBeDefined()
+
+  expect(await agentRadar($)).toEqual({ text: 'Detail pane closed' })
+  expect(calls).toEqual(['open agent-radar', 'close agent-radar'])
+  expect(await ui.find({ type: 'Button', key: 'pane', text: /Detail/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('open only opens and close only closes: the other way round it does nothing', async ($, on) => {
+  const { calls } = radar(on)
+  const ui = await band($)
+
+  expect(await agentRadar($, 'close')).toEqual({ text: 'Detail pane closed' })
+  expect(calls).toEqual([])
+
+  expect(await agentRadar($, 'open')).toEqual({ text: 'Detail pane opened' })
+  expect(await agentRadar($, ' OPEN ')).toEqual({ text: 'Detail pane opened' })
+  expect(calls).toEqual(['open agent-radar'])
+  expect(await ui.find({ type: 'Button', key: 'pane', text: /Close/ })).toBeDefined()
+
+  expect(await agentRadar($, 'close')).toEqual({ text: 'Detail pane closed' })
+  expect(calls).toEqual(['open agent-radar', 'close agent-radar'])
+  expect(await ui.find({ type: 'Button', key: 'pane', text: /Detail/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('the button and the command work the same pane: each sees what the other did', async ($, on) => {
+  const { calls } = radar(on)
+  const ui = await band($)
+
+  await ui.press({ key: 'pane' })
+  expect(await agentRadar($)).toEqual({ text: 'Detail pane closed' })
+  expect(await agentRadar($)).toEqual({ text: 'Detail pane opened' })
+  await ui.press({ key: 'pane' })
+  expect(calls).toEqual(['open agent-radar', 'close agent-radar', 'open agent-radar', 'close agent-radar'])
+  await ui.unmount()
+})
+
+test('an argument it does not know answers with the usage and changes nothing', async ($, on) => {
+  const { calls } = radar(on)
+  const ui = await band($)
+
+  expect(await agentRadar($, 'toggle')).toEqual({ text: 'Usage: /agent-radar [open|close]. With no argument, it toggles the pane.' })
+  expect(await agentRadar($, 'open now')).toEqual({ text: 'Usage: /agent-radar [open|close]. With no argument, it toggles the pane.' })
+  expect(calls).toEqual([])
+  expect(await ui.find({ type: 'Button', key: 'pane', text: /Detail/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('with the radar OFF the command says so and opens nothing; back ON it opens', async ($, on) => {
+  const { calls } = radar(on)
+  const ui = await band($)
+
+  await ui.press({ key: 'toggle' })
+
+  for (const args of ['', 'open', 'close']) {
+    expect(await agentRadar($, args)).toEqual({ text: 'Claude Radar is OFF. Turn it on with its button.' })
+  }
+  expect(calls).toEqual([])
+  expect(await agentRadar($, 'bogus')).toEqual({ text: 'Usage: /agent-radar [open|close]. With no argument, it toggles the pane.' })
+
+  await ui.press({ key: 'toggle' })
+  expect(await agentRadar($)).toEqual({ text: 'Detail pane opened' })
+  expect(calls).toEqual(['open agent-radar'])
+  await ui.unmount()
+})
+
+test('turning the radar OFF closes the pane the command opened, and the command then finds it closed', async ($, on) => {
+  const { calls } = radar(on)
+  const ui = await band($)
+
+  await agentRadar($)
+  await ui.press({ key: 'toggle' })
+  expect(calls).toEqual(['open agent-radar', 'close agent-radar'])
+
+  await ui.press({ key: 'toggle' })
+  expect(await agentRadar($)).toEqual({ text: 'Detail pane opened' })
+  expect(calls).toEqual(['open agent-radar', 'close agent-radar', 'open agent-radar'])
+  await ui.unmount()
+})
+
+test('a surface that places no panes: the answer and the toast give the reason, and nothing is left waiting', async ($, on) => {
+  const toasts: string[] = []
+  const { calls } = radar(on, undefined, toasts, false)
+  const ui = await band($)
+
+  expect(await agentRadar($)).toEqual({ text: 'The detail pane is not available here: no panes here' })
+  expect(toasts).toEqual(['The detail pane is not available here: no panes here'])
+  expect(calls).toEqual(['open agent-radar', 'close agent-radar'])
+  expect(await ui.find({ type: 'Button', key: 'pane', text: /Detail/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('opening is the first asynchronous step of the command: the language is read after it', async ($, on) => {
+  const { calls } = radar(on)
+  const readsAfter: number[] = []
+
+  on('settings.read', () => {
+    readsAfter.push(calls.length)
+
+    return { value: { language: 'Español' } } as never
+  })
+
+  // Nothing settled the language yet, as with a command typed before any other event.
+  expect(await agentRadar($)).toEqual({ text: 'Panel de detalle abierto' })
+  expect(readsAfter[0]).toBe(1)
+})
+
+test('the command speaks the language of settings.language: its description and its answers', async ($, on) => {
+  const { commands } = radar(on)
+
+  on('settings.read', spanish)
+  await $.session.start({ cwd: '/work', surface: 'terminal', isInteractive: true })
+
+  expect(commands[0]).toEqual({ name: 'agent-radar', description: 'Abre o cierra el panel de detalle de Claude Radar.', argumentHint: '[open|close]' })
+  expect(await agentRadar($)).toEqual({ text: 'Panel de detalle abierto' })
+  expect(await agentRadar($)).toEqual({ text: 'Panel de detalle cerrado' })
+  expect(await agentRadar($, 'otra')).toEqual({ text: 'Uso: /agent-radar [open|close]. Sin argumento, alterna el panel.' })
+
+  const ui = await band($)
+
+  await ui.press({ key: 'toggle' })
+  expect(await agentRadar($)).toEqual({ text: 'Claude Radar está apagado (OFF). Enciéndelo con su botón.' })
+  await ui.unmount()
+})
+
 test('hidesTools: only with the radar ON, work going on and nobody waiting for the person', async () => {
   const working = startTurn(initialState(), 'go', 0)
   const withAgent = spawned(initialState(), 'a1')
@@ -1903,11 +2036,12 @@ test('the reply and everything else the radar must not touch is drawn by the eng
 
 test('a whole session of work registers nothing, calls no model and injects nothing into the context', async ($, on) => {
   const clock = radar(on)
+  const { commands } = clock
   const seen: string[] = []
   let spawns = 0
 
   // Every way the radar could cost tokens or add to the session: a tool, a command, an agent, a model call, a prompt, a message.
-  for (const event of ['tool.register', 'command.register', 'agent.register', 'model.complete', 'prompt.submit', 'session.send', 'session.compact']) {
+  for (const event of ['tool.register', 'agent.register', 'model.complete', 'prompt.submit', 'session.send', 'session.compact']) {
     ;(on as any)(event, () => {
       seen.push(event)
 
@@ -1942,6 +2076,8 @@ test('a whole session of work registers nothing, calls no model and injects noth
   // Only the two spawns the test itself made, and nothing else of the list.
   expect(spawns).toBe(2)
   expect(seen).toEqual([])
+  // The only thing it registers is the command that opens the pane.
+  expect(commands.map(command => command.name)).toEqual(['agent-radar'])
   // What the model would read, as the layers beneath made it: untouched by the radar.
   expect(await $.prompt.compose({} as never)).toEqual({ sections: [{ id: 'base', text: 'SYSTEM', scope: 'shared' }] })
   expect(await $.prompt.context({ blocks: [] } as never)).toEqual({ blocks: [{ name: 'currentDate', text: 'today' }] })

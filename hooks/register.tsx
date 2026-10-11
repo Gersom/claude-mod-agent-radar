@@ -99,9 +99,27 @@ const ensureLang = async ($: EngineInterface) => {
 /** The words of the language in force. Before an event settled it a draw reads the settings itself, without writing. */
 const textsFor = async ($: EngineInterface) => textsOf((await read($, langMode)) ?? (await readLang($)))
 
+/**
+ * Whether the pane is open and the radar is ON, as plain module variables: the `/agent-radar` command has to decide what to do without an
+ * `await` before `$.ui.open` (the engine counts an open as the person's own only when it is the handler's first asynchronous step, as the
+ * button's press showed), so it cannot `read` the atoms. They follow the atoms: every write below sets both, and `session.start` reads them
+ * again, so a reload of the module (which loses variables, not atoms) is mended with the next session. A stale value costs a redundant
+ * `ui.open` of an open pane, which the engine only retitles.
+ */
+let paneIsOpen = false
+let radarIsOn = true
+
+/** Sets the pane's flag, atom and mirror together. */
+const setPaneOpen = async ($: EngineInterface, value: boolean) => {
+  paneIsOpen = value
+  await update($, paneOpen, () => value)
+}
+
 /** Applies `fn` to the radar's state and keeps `hideTools` in step with it, written only when it changes. */
 const change = async ($: EngineInterface, fn: (state: ClaudeRadarState) => ClaudeRadarState) => {
   const state = await update($, radar, fn)
+
+  radarIsOn = state.claudeRadarEnabled
   const hides = hidesTools(await read($, radar))
 
   if ((await read($, hideTools)) !== hides) await update($, hideTools, () => hides)
@@ -166,26 +184,39 @@ const closePane = async ($: EngineInterface) => {
   if (!(await read($, paneOpen))) return
 
   await $.ui.close({ id: PANE_ID })
-  await update($, paneOpen, () => false)
+  await setPaneOpen($, false)
   stop()
 }
 
-/** The detail button: opens the pane, or closes it if it is open. Only a press opens it, never the radar on its own. A surface that places no panes gets a toast and no pane left waiting. */
-const togglePane = async ($: EngineInterface, isOpen: boolean) => {
-  // `isOpen` is what the band drew, so the open call below is the handler's first await and the engine still sees it as the person's own press.
-  if (isOpen) return closePane($)
-
+/**
+ * Opens the pane: `$.ui.open` is the first asynchronous step, so the engine still sees it as the person's own press or command and places it
+ * at any width. Resolves `null` once it is on screen, or the engine's reason when this surface places no panes; nothing is left waiting then.
+ */
+const openPane = async ($: EngineInterface) => {
   const opened = await $.ui.open({ id: PANE_ID, title: NAME, rows: PANE_ROWS, columns: PANE_COLUMNS })
 
   if (opened.isPlaced) {
-    await update($, paneOpen, () => true)
+    await setPaneOpen($, true)
     // The pane is on screen: the times and the animation move while there is work.
     await start($)
-  } else {
-    // Open but undrawn: leave nothing waiting to pop up later on its own.
-    await $.ui.close({ id: PANE_ID })
-    $.ui.toast((await textsFor($)).paneUnavailable(opened.reason))
+
+    return null
   }
+
+  // Open but undrawn: leave nothing waiting to pop up later on its own.
+  await $.ui.close({ id: PANE_ID })
+
+  return opened.reason
+}
+
+/** The detail button: opens the pane, or closes it if it is open. Only a press or the command opens it, never the radar on its own. A surface that places no panes gets a toast. */
+const togglePane = async ($: EngineInterface, isOpen: boolean) => {
+  // `isOpen` is what the band drew, so the open call is the handler's first await.
+  if (isOpen) return closePane($)
+
+  const reason = await openPane($)
+
+  if (reason !== null) $.ui.toast((await textsFor($)).paneUnavailable(reason))
 }
 
 /** Turns the radar ON or OFF, saves the choice and says so with a brief toast. */
@@ -213,6 +244,16 @@ export const register: Register = on => {
     await ensureEnabled($)
     await ensureLang($)
 
+    // The command's mirrors follow the atoms again (a reload loses them).
+    paneIsOpen = await read($, paneOpen)
+    radarIsOn = (await read($, radar)).claudeRadarEnabled
+
+    await $.command.register({
+      name: 'agent-radar',
+      description: (await textsFor($)).commandDescription,
+      argumentHint: '[open|close]'
+    })
+
     return next(e)
   })
 
@@ -230,10 +271,40 @@ export const register: Register = on => {
   on('ui.close', { id: PANE_ID }, async ($, e, next) => {
     const closed = await next(e)
 
-    await update($, paneOpen, () => false)
+    await setPaneOpen($, false)
     stop()
 
     return closed
+  })
+
+  // `/agent-radar` opens or closes the detail pane: with no argument it toggles, `open` only opens, `close` only closes. Its person's own
+  // request places the pane at any width. The decision uses the mirrors, so `$.ui.open` is the first `await` of an opening.
+  on('command.run', { command: 'agent-radar' }, async ($, e) => {
+    const arg = e.args.trim().toLowerCase()
+    const isKnown = arg === '' || arg === 'open' || arg === 'close'
+
+    if (isKnown && radarIsOn && !paneIsOpen && arg !== 'close') {
+      const reason = await openPane($)
+      const t = await textsFor($)
+
+      if (reason === null) return { text: t.paneOpened }
+
+      $.ui.toast(t.paneUnavailable(reason))
+
+      return { text: t.paneUnavailable(reason) }
+    }
+
+    await ensureLang($)
+
+    const t = await textsFor($)
+
+    if (!isKnown) return { text: t.commandUsage }
+    if (!radarIsOn) return { text: t.radarOff }
+
+    // Open already (`open`, or the toggle's turn to close), or closed already (`close`).
+    if (arg !== 'open') await closePane($)
+
+    return { text: arg === 'open' || paneIsOpen ? t.paneOpened : t.paneClosed }
   })
 
   on('turn.start', async ($, e, next) => {

@@ -56,7 +56,25 @@ History                                       1
 
 El motor coloca un panel que abre el plugin sin que nadie lo pida solo desde 144 columnas de terminal; uno abierto por una pulsación se coloca con cualquier ancho. Por eso la apertura sale siempre de una pulsación. Si la superficie no coloca paneles, el mod muestra el aviso `The detail pane is not available here` y no deja ningún panel esperando.
 
-Se cierra con el mismo botón (`[ ◧ Close ]`) o con la marca o la tecla de cierre del propio panel; entonces el botón vuelve a `Detail`. Apagar el radar (`OFF`) también lo cierra.
+Se cierra con el mismo botón (`[ ◧ Close ]`), con el comando `/agent-radar` o con la marca o la tecla de cierre del propio panel; entonces el botón vuelve a `Detail`. Apagar el radar (`OFF`) también lo cierra.
+
+## Comando `/agent-radar`
+
+Abre y cierra el mismo panel de detalle, para quien prefiere teclear. Es una petición de la persona, así que el panel se coloca con cualquier ancho (como con el botón).
+
+| Comando | Efecto | Respuesta |
+|---|---|---|
+| `/agent-radar` | alterna: abre si está cerrado, cierra si está abierto | `Detail pane opened` / `Detail pane closed` |
+| `/agent-radar open` | solo abre; con el panel ya abierto no hace nada | `Detail pane opened` |
+| `/agent-radar close` | solo cierra; con el panel ya cerrado no hace nada | `Detail pane closed` |
+| `/agent-radar <otra cosa>` | no cambia nada | `Usage: /agent-radar [open\|close]. With no argument, it toggles the pane.` |
+
+- Con el radar en `OFF` responde `Claude Radar is OFF. Turn it on with its button.` y no abre nada.
+- Si la superficie no coloca paneles, la respuesta y un aviso dicen el motivo (`The detail pane is not available here: <motivo>`) y no queda ningún panel esperando.
+- Las respuestas y la descripción del comando van en el idioma detectado (ver «Idioma»); en español: `Panel de detalle abierto` / `Panel de detalle cerrado`, `Uso: /agent-radar [open|close]. Sin argumento, alterna el panel.` y `Claude Radar está apagado (OFF). Enciéndelo con su botón.`
+- Se registra al empezar la sesión (`session.start`) y se atiende con un hook `command.run`. **Es el único comando del mod**: la especificación original prohibía crear comandos (`/simple`, `/radar` y similares) y el control era solo por botones; este comando lo pidió expresamente el operador. `/simple` y `/radar` siguen sin existir, y el radar no se enciende ni se apaga con comandos: eso es solo del botón ON/OFF.
+- **Cómo decide sin leer el estado:** para que el motor cuente la apertura como petición de la persona, `$.ui.open` tiene que ser el primer paso asíncrono del comando. Por eso decide con dos variables del módulo (si el panel está abierto y si el radar está en `ON`) que reflejan los átomos; `session.start` las vuelve a leer tras una recarga del mod. Si quedaran desfasadas, el peor caso es un `$.ui.open` sobre un panel ya abierto, que el motor solo retitula.
+- La respuesta del comando es una línea que queda en la conversación y el modelo lee con el siguiente mensaje (unos pocos tokens, solo cuando tú lo ejecutas); el resto del mod no escribe nada en la conversación.
 
 ## Idioma
 
@@ -143,7 +161,7 @@ Se guarda en el estado (`history`, hasta 50 entradas, una por id, la más recien
 
 ## Botón ON/OFF
 
-- Se controla **solo con botones**. No hay comandos `/simple`, `/radar` ni ningún otro.
+- El radar se enciende y se apaga **solo con su botón**: no hay comandos `/simple` ni `/radar`, y `/agent-radar` solo abre y cierra el panel.
 - El botón `[ ● Claude Radar: ON ]` se ve siempre: en `OFF`, sin turno y con Claude inactivo.
 - Al pulsarlo muestra un aviso breve (`Claude Radar: ON` / `Claude Radar: OFF`).
 - Estado inicial: `ON`. La elección se guarda en `$.store` (clave `enabled`, el almacén propio del mod, local de cada equipo) y se restaura al empezar la sesión. Si el almacén no se puede leer o escribir, rige `ON` y el cambio vale igual para la sesión.
@@ -163,13 +181,13 @@ Es **solo dibujo**: no bloquea, modifica ni cancela herramientas, los resultados
 
 El radar **no engancha** `AssistantMessage`, `UserMessage`, `TurnDuration`, `InfoNotice`, `SessionMode`, `AskUserQuestion`, `PromptHint` ni `CommandOutput`: la respuesta final, los reportes de archivos, los resultados de pruebas, las advertencias y los errores los dibuja siempre el motor. `All done` convive con la respuesta, no la sustituye. Los únicos `ui.render` del mod son `AbovePrompt` (la banda), `Pane` (el panel de detalle), `ToolUse`, `ToolResult`, `ToolGroup` y `ToolProgress`; `claude plugin validate` los lista.
 
-## Consumo de tokens: cero
+## Consumo de tokens: prácticamente cero
 
 El mod solo observa eventos y dibuja:
 
 - no llama a ningún modelo (ni para títulos, porcentajes o actividades);
 - no engancha `prompt.compose` ni ningún otro `prompt.*`, no inyecta instrucciones ni mensajes en la conversación;
-- no registra herramientas, comandos ni agentes, y no crea subagentes de supervisión;
+- no registra herramientas ni agentes, y no crea subagentes de supervisión; su único comando es `/agent-radar` (abre y cierra el panel), cuya respuesta es la única línea que escribe en la conversación;
 - no lee transcripciones ni archivos de agentes; el estado se actualiza con los eventos que ya pasan;
 - los hooks de eventos devuelven `next(e)` o el resultado de `await next(e)` sin tocarlos;
 - un único temporizador de 250 ms (animación y tiempos del panel) que corre **solo con el panel abierto** y mientras hay algo que mover, y se cancela al cerrarlo, al quedar inactivo o en `OFF`. Con el panel cerrado no hay tics: el estado se actualiza solo por eventos, y los subagentes terminados salen de la lista viva a los 5 s con un temporizador de un solo disparo.
@@ -177,7 +195,7 @@ El mod solo observa eventos y dibuja:
 ## Tipo y fuente de datos
 
 - **Tipo:** hook (plugin de Claude Code).
-- **Eventos:** `session.start`, `session.end` (borra el estado de la sesión), `ui.close` del panel de detalle, `turn.start`, `turn.complete`, `tool.call`, `tool.check` (para `Needs you`: solo cuenta una pregunta de origen `engine`), `agent.spawn`.
+- **Eventos:** `session.start` (registra el comando), `command.run` de `/agent-radar`, `session.end` (borra el estado de la sesión), `ui.close` del panel de detalle, `turn.start`, `turn.complete`, `tool.call`, `tool.check` (para `Needs you`: solo cuenta una pregunta de origen `engine`), `agent.spawn`.
 - **Dibujo:** `ui.render` sobre `AbovePrompt` (la banda), sobre `Pane` con `requestId` `agent-radar` (el panel de detalle) y sobre las cuatro filas técnicas. El panel se abre y cierra con `$.ui.open` / `$.ui.close`.
 - **Estado:** `$.state` con cuatro claves: `claudeRadarState` (todo el estado, el historial incluido), `claudeRadarHidesTools` (si las filas están ocultas; aparte para que la transcripción se redibuje al cambiar de fase y no en cada tic), `claudeRadarPaneOpen` (si el panel está abierto, para el botón y el temporizador) y `claudeRadarLang` (el idioma, o `null` hasta que se lee).
 - **Almacén, ajustes y reloj:** `$.store` (clave `enabled`), `$.settings.read()` (clave `language`), `$.clock.now()`, `$.clock.every(250, …)` y `$.clock.after(5000, …)`.
@@ -259,6 +277,7 @@ agent-radar/
 Lo que **no se pudo verificar** contra el Claude Code real (los tests usan el kit simulado del motor):
 
 - **Idioma:** `settings.language` es texto libre y solo se reconoce el español; cualquier otro valor va en inglés. El motivo que acompaña al aviso «el panel no está disponible» lo da el motor con sus propias palabras (en inglés) y no se traduce. Las dos traducciones las comprueban los tests con ajustes simulados, no con un `settings.read` real.
+- **`/agent-radar`:** que el motor cuente la apertura del comando como petición de la persona (y por tanto coloque el panel con cualquier ancho) se apoya en que `$.ui.open` es su primer paso asíncrono; el kit de pruebas no distingue peticiones de la persona, así que solo se comprobó el orden de las llamadas y no la colocación real. Si el panel no se colocara, la respuesta del comando lo diría.
 - **Sin abrir el panel no se ve el progreso.** Es una decisión (ver «Cómo se abre el panel»), no una carencia: un panel abierto por el mod no se colocaría bajo 144 columnas.
 - **Dónde se acopla el panel** (a un lado de la transcripción o sobre el prompt) y cómo se ve con `rows: 14` / `columns: 60`; que `isPlaced` sea `false` en las superficies sin soporte (solo se probó con un `ui.open` simulado).
 - **Cierre por el usuario:** el hook `ui.close` que devuelve el botón a `Detail` no se pudo ejercitar con el kit (el `$` de los tests no puede cerrar paneles ni simular a la persona), así que se apoya en lo que dicen los tipos. Si el motor no entregara ese evento, el botón seguiría en `Close`; una pulsación llamaría a un cierre sobre un panel ya cerrado, que el motor ignora, y volvería a `Detail`.

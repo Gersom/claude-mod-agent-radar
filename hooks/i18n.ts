@@ -41,6 +41,16 @@ export type Texts = {
   defaultTitle: string
   /** The name of a task whose text leaves nothing valid. */
   workingOnIt: string
+  /** The one line the typeahead shows for `/agent-radar`. */
+  commandDescription: string
+  /** What `/agent-radar` answers to an argument it does not know. */
+  commandUsage: string
+  /** What `/agent-radar` answers once the pane is open. */
+  paneOpened: string
+  /** What `/agent-radar` answers once the pane is closed. */
+  paneClosed: string
+  /** What `/agent-radar` answers while the radar is OFF: it opens nothing. */
+  radarOff: string
 }
 
 /** The mod's proper name, which is not translated; also the pane's title. */
@@ -81,7 +91,12 @@ export const TEXTS: Record<Lang, Texts> = {
     },
     working: 'Trabajando',
     defaultTitle: 'Trabajando en tu petición',
-    workingOnIt: 'En ello'
+    workingOnIt: 'En ello',
+    commandDescription: 'Abre o cierra el panel de detalle de Claude Radar.',
+    commandUsage: 'Uso: /agent-radar [open|close]. Sin argumento, alterna el panel.',
+    paneOpened: 'Panel de detalle abierto',
+    paneClosed: 'Panel de detalle cerrado',
+    radarOff: 'Claude Radar está apagado (OFF). Enciéndelo con su botón.'
   },
   en: {
     lang: 'en',
@@ -114,7 +129,12 @@ export const TEXTS: Record<Lang, Texts> = {
     },
     working: 'Working',
     defaultTitle: 'Working on your request',
-    workingOnIt: 'Working on it'
+    workingOnIt: 'Working on it',
+    commandDescription: 'Open or close the Claude Radar detail pane.',
+    commandUsage: 'Usage: /agent-radar [open|close]. With no argument, it toggles the pane.',
+    paneOpened: 'Detail pane opened',
+    paneClosed: 'Detail pane closed',
+    radarOff: 'Claude Radar is OFF. Turn it on with its button.'
   }
 }
 
