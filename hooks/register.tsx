@@ -1,6 +1,8 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
+import type { ClaudeRadarState } from '../types'
+
 import {
   TICK_MS,
   activityOf,
@@ -14,6 +16,7 @@ import {
   finishSubagent,
   finishTurn,
   headlineOf,
+  hidesTools,
   initialState,
   isLive,
   layoutOf,
@@ -58,6 +61,19 @@ const SUBAGENT_TONE = {
 /** The radar's state: what the header and the next panels draw from. */
 const radar = atom({ plugin: 'agent-radar', key: 'claudeRadarState' } as const, initialState())
 
+/** Whether the tool rows are hidden: the one value the transcript's rows read, so they redraw when it flips and not on every tick of the state. */
+const hideTools = atom({ plugin: 'agent-radar', key: 'claudeRadarHidesTools' } as const, false)
+
+/** Applies `fn` to the radar's state and keeps `hideTools` in step with it, written only when it changes. */
+const change = async ($: EngineInterface, fn: (state: ClaudeRadarState) => ClaudeRadarState) => {
+  const state = await update($, radar, fn)
+  const hides = hidesTools(await read($, radar))
+
+  if ((await read($, hideTools)) !== hides) await update($, hideTools, () => hides)
+
+  return state
+}
+
 /** The one restore of the saved choice per load of the module (a reload starts it over); shared, so no draw reads the flag before it ends. */
 let restoring: Promise<void> | null = null
 
@@ -75,7 +91,7 @@ const ensureEnabled = ($: EngineInterface) => {
     if (typeof saved === 'boolean') {
       const enabled = saved
 
-      await update($, radar, state => ({ ...state, claudeRadarEnabled: enabled }))
+      await change($,state => ({ ...state, claudeRadarEnabled: enabled }))
     }
   })()
 
@@ -100,7 +116,7 @@ const start = async ($: EngineInterface) => {
 
   ticker = $.clock.every(TICK_MS, async () => {
     const time = await $.clock.now()
-    const state = await update($, radar, current => advance(current, time))
+    const state = await change($,current => advance(current, time))
 
     if (!state.claudeRadarEnabled || !isLive(state)) stop()
   })
@@ -108,7 +124,7 @@ const start = async ($: EngineInterface) => {
 
 /** Turns the radar ON or OFF, saves the choice and says so with a brief toast. */
 const setEnabled = async ($: EngineInterface, enabled: boolean) => {
-  await update($, radar, state => ({ ...state, claudeRadarEnabled: enabled }))
+  await change($,state => ({ ...state, claudeRadarEnabled: enabled }))
 
   try {
     await $.store.set(STORE_KEY, enabled)
@@ -122,7 +138,7 @@ const setEnabled = async ($: EngineInterface, enabled: boolean) => {
     // Back ON in the middle of a turn: what folded or retired while nobody looked goes now, and the timer goes on.
     const time = await $.clock.now()
 
-    await update($, radar, state => pruneFinished(collapseIfDue(state, time), time))
+    await change($,state => pruneFinished(collapseIfDue(state, time), time))
     await start($)
   }
 
@@ -146,7 +162,7 @@ export const register: Register = on => {
   on('turn.start', async ($, e, next) => {
     const time = await $.clock.now()
 
-    await update($, radar, state => startTurn(state, e.text, time))
+    await change($,state => startTurn(state, e.text, time))
     await start($)
 
     return next(e)
@@ -160,7 +176,7 @@ export const register: Register = on => {
     if (id !== undefined) {
       const time = await $.clock.now()
 
-      await update($, radar, state =>
+      await change($,state =>
         spawnSubagent(state, { id, name: e.subagentType, task: e.description, parentId: e.parentAgentId }, time)
       )
       await start($)
@@ -173,13 +189,13 @@ export const register: Register = on => {
     const time = await $.clock.now()
 
     if (e.agentId === undefined) {
-      await update($, radar, state => finishTurn(state, e.reason, time))
+      await change($,state => finishTurn(state, e.reason, time))
       await start($)
     } else {
       // A subagent's turn ends that subagent, never the main one; an agent not followed changes nothing.
       const id = e.agentId
 
-      await update($, radar, state => finishSubagent(state, id, e.reason, time))
+      await change($,state => finishSubagent(state, id, e.reason, time))
     }
 
     return next(e)
@@ -191,7 +207,7 @@ export const register: Register = on => {
       const id = e.agentId
       const activity = activityOf(e.tool, e.tool === 'Bash' ? e.command : undefined)
 
-      await update($, radar, state => workSubagent(state, id, activity))
+      await change($,state => workSubagent(state, id, activity))
 
       return next(e)
     }
@@ -199,17 +215,17 @@ export const register: Register = on => {
     const ran = await next(e)
 
     // The call is over, whether the person allowed it or not: Claude is working again.
-    await update($, radar, state => resumeWork(state))
+    await change($,state => resumeWork(state))
 
     if (didRun(ran)) {
       if (e.tool === 'TodoWrite') {
-        await update($, radar, state => writeTodos(state, e.todos))
+        await change($,state => writeTodos(state, e.todos))
       } else if (e.tool === 'TaskCreate') {
         const id = taskIdOf(ran.result, e.tool_use_id)
 
-        await update($, radar, state => addTask(state, id, e.subject))
+        await change($,state => addTask(state, id, e.subject))
       } else if (e.tool === 'TaskUpdate') {
-        await update($, radar, state => updateTask(state, e.taskId, { status: e.status, subject: e.subject }))
+        await change($,state => updateTask(state, e.taskId, { status: e.status, subject: e.subject }))
       }
     }
 
@@ -223,15 +239,50 @@ export const register: Register = on => {
     // Only the model's own calls count: another plugin's `$.tool.check` query asks, it does not wait for anyone.
     if (next.origin.plugin === 'engine' && verdict.decision === 'ask') {
       if (e.agentId === undefined) {
-        await update($, radar, state => askUser(state))
+        await change($,state => askUser(state))
       } else {
         const id = e.agentId
 
-        await update($, radar, state => askSubagent(state, id))
+        await change($,state => askSubagent(state, id))
       }
     }
 
     return verdict
+  })
+
+  // The tool rows give way to the radar while work goes on; they come back when it ends, waits for the person or the radar is OFF.
+  // Only drawing: the calls, their results and the history are not touched. A row of a call that failed or was cut stays in view.
+  // Never hooked here: the reply (`AssistantMessage`), `UserMessage`, `TurnDuration`, `InfoNotice`, `SessionMode`, `AskUserQuestion`, `PromptHint`.
+  on('ui.render', { component: 'ToolUse' }, async ($, e, next) => {
+    if (e.props.isErrored || e.props.isInterrupted || !(await read($, hideTools))) return next(e)
+
+    const { Box } = $.ui.resolve(e)
+
+    return <Box />
+  })
+
+  on('ui.render', { component: 'ToolResult' }, async ($, e, next) => {
+    if (e.props.isErrored || !(await read($, hideTools))) return next(e)
+
+    const { Box } = $.ui.resolve(e)
+
+    return <Box />
+  })
+
+  on('ui.render', { component: 'ToolGroup' }, async ($, e, next) => {
+    if (e.props.calls.some(call => call.isErrored || call.isInterrupted) || !(await read($, hideTools))) return next(e)
+
+    const { Box } = $.ui.resolve(e)
+
+    return <Box />
+  })
+
+  on('ui.render', { component: 'ToolProgress' }, async ($, e, next) => {
+    if (!(await read($, hideTools))) return next(e)
+
+    const { Box } = $.ui.resolve(e)
+
+    return <Box />
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {

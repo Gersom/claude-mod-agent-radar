@@ -236,6 +236,17 @@ export const isLive = (state: ClaudeRadarState) => {
   )
 }
 
+/** Whether the tool rows (calls, results, groups, progress) are hidden now: the radar is ON and work goes on (the main turn working, or any subagent at work), and nobody waits for the person: a call that asks permission stays in view. */
+export const hidesTools = (state: ClaudeRadarState) => {
+  if (!state.claudeRadarEnabled) return false
+
+  const { phase } = state.checklist
+
+  if (phase === 'needsYou' || Object.values(state.subagents).some(agent => agent.status === 'needsYou')) return false
+
+  return phase === 'working' || activeCount(state.subagents) > 0
+}
+
 /** How the header reads: what it says, the figure that goes with it and the tone that colours the first. */
 export type Headline = {
   label: string

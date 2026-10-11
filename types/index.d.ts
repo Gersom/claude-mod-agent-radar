@@ -48,6 +48,8 @@ declare module 'claude-code' {
   interface PluginState {
     'agent-radar': {
       claudeRadarState: ClaudeRadarState
+      /** Whether the tool rows are hidden now (see `hidesTools`); kept apart from the state so the transcript redraws on a change of phase, not on every tick. */
+      claudeRadarHidesTools: boolean
     }
   }
 }

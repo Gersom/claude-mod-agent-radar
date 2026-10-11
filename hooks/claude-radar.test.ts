@@ -13,6 +13,7 @@ import {
   finishSubagent,
   finishTurn,
   headlineOf,
+  hidesTools,
   initialState,
   isLive,
   layoutOf,
@@ -436,8 +437,8 @@ const isFramed = async (ui: { find: (query: { type: string }) => Promise<{ child
 }
 
 /** The bottom a register test stands on: the band, a store, the clock and the turn events answering as the engine does. */
-const radar = (on: any) => {
-  on('ui.render', () => engineBand)
+const radar = (on: any, draw: (...args: any[]) => unknown = () => engineBand) => {
+  on('ui.render', draw)
   on('session.start', ($: unknown, e: { cwd: string }) => ({ cwd: e.cwd }))
   on('turn.start', ($: unknown, e: { turnId: string }) => ({ turnId: e.turnId }))
   on('turn.complete', ($: unknown, e: { answer: string }) => ({ text: e.answer }))
@@ -1459,4 +1460,193 @@ test('a nested subagent shows under its parent only when the spawn names a paren
   expect(lead).toBeDefined()
   expect(await ui.findAll({ type: 'Box', props: { paddingLeft: 2 } } as never)).not.toHaveLength(0)
   await ui.unmount()
+})
+
+test('hidesTools: only with the radar ON, work going on and nobody waiting for the person', async () => {
+  const working = startTurn(initialState(), 'go', 0)
+  const withAgent = spawned(initialState(), 'a1')
+
+  expect(hidesTools(initialState())).toBe(false)
+  expect(hidesTools(working)).toBe(true)
+  expect(hidesTools({ ...working, claudeRadarEnabled: false })).toBe(false)
+  expect(hidesTools(askUser(working))).toBe(false)
+  expect(hidesTools(finishTurn(working, 'answer', 1))).toBe(false)
+  expect(hidesTools(finishTurn(working, 'error', 1))).toBe(false)
+  expect(hidesTools(finishTurn(working, 'aborted', 1))).toBe(false)
+  // Subagents at work keep the rows hidden after the main turn ended; one that waits for the person shows them.
+  expect(hidesTools(withAgent)).toBe(true)
+  expect(hidesTools(finishTurn(spawned(working, 'a1'), 'answer', 1))).toBe(true)
+  expect(hidesTools(askSubagent(withAgent, 'a1'))).toBe(false)
+  expect(hidesTools(askSubagent(spawned(working, 'a1'), 'a1'))).toBe(false)
+  expect(hidesTools(finishSubagent(withAgent, 'a1', 'answer', 1))).toBe(false)
+  expect(hidesTools({ ...withAgent, claudeRadarEnabled: false })).toBe(false)
+})
+
+/** What the engine draws for any component, so a test can tell it from nothing. */
+const drawing = (_: unknown, e: { component: string }) => ({
+    type: 'Box' as const,
+    props: {},
+    children: [{ type: 'Text' as const, props: {}, children: [`ENGINE ${e.component}`] }]
+  })
+
+/** The props each tool row takes, as the kit mounts them. */
+const ROWS = {
+  ToolUse: { tool_use_id: 't1', tool: 'Bash', input: { command: 'ls' }, isRunning: true, isErrored: false, isInterrupted: false },
+  ToolResult: { tool_use_id: 't1', tool: 'Bash', output: { stdout: 'files' }, isErrored: false },
+  ToolGroup: {
+    calls: [{ tool: 'Read', input: {}, isRunning: false, isErrored: false, isInterrupted: false }],
+    isActive: true,
+    isExpanded: false
+  },
+  ToolProgress: { tool_use_id: 't1', kind: 'background_hint', hint: '(ctrl+b to run in background)' }
+} as const
+
+const row = ($: any, component: string, props: object = {}) =>
+  $.ui.mount({
+    plugin: 'agent-radar',
+    surface: 'terminal',
+    component,
+    requestId: `row-${component}`,
+    props: { ...(ROWS as Record<string, object>)[component], ...props } as never
+  })
+
+test('with the radar ON and the agent working the tool rows draw nothing', async ($, on) => {
+  radar(on, drawing)
+  await begin($)
+
+  for (const component of Object.keys(ROWS)) {
+    const ui = await row($, component)
+
+    expect(await ui.find({ type: 'Text', text: /ENGINE/ })).toBeUndefined()
+    expect(await ui.find({ type: 'Text' })).toBeUndefined()
+    await ui.unmount()
+  }
+})
+
+test('the tool rows draw as the engine does before work, after it, when OFF and when the person is asked', async ($, on) => {
+  radar(on, drawing)
+  on('tool.check', () => ({ decision: 'ask' }) as never)
+  on('tool.call', () => answered({ stdout: '' }))
+
+  const seen = async (component: string) => {
+    const ui = await row($, component)
+    const found = await ui.find({ type: 'Text', text: new RegExp(`ENGINE ${component}`) })
+
+    await ui.unmount()
+
+    return found !== undefined
+  }
+
+  for (const component of Object.keys(ROWS)) expect(await seen(component)).toBe(true)
+
+  await begin($)
+  expect(await seen('ToolUse')).toBe(false)
+
+  // The person is asked: the call that asks stays in view.
+  await $.tool.check({ tool: 'Bash', input: { command: 'rm x' } })
+  for (const component of Object.keys(ROWS)) expect(await seen(component)).toBe(true)
+
+  await $.tool.call({ tool: 'Bash', command: 'rm x' })
+  expect(await seen('ToolUse')).toBe(false)
+
+  await finish($)
+  for (const component of Object.keys(ROWS)) expect(await seen(component)).toBe(true)
+
+  // OFF in the middle of work.
+  await begin($)
+  expect(await seen('ToolResult')).toBe(false)
+
+  const band = await $.ui.mount({ plugin: 'agent-radar', surface: 'terminal', ...BAND })
+
+  await band.press({ key: 'toggle' })
+  for (const component of Object.keys(ROWS)) expect(await seen(component)).toBe(true)
+
+  await band.press({ key: 'toggle' })
+  expect(await seen('ToolGroup')).toBe(false)
+  await band.unmount()
+})
+
+test('a mounted row hides and comes back by itself when the phase changes', async ($, on) => {
+  radar(on, drawing)
+
+  const ui = await row($, 'ToolUse')
+
+  expect(await ui.find({ type: 'Text', text: /ENGINE ToolUse/ })).toBeDefined()
+
+  await begin($)
+  expect(await ui.find({ type: 'Text', text: /ENGINE ToolUse/ })).toBeUndefined()
+
+  await finish($)
+  expect(await ui.find({ type: 'Text', text: /ENGINE ToolUse/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('the rows stay hidden while a subagent works after the main turn, and come back when it ends or asks', async ($, on) => {
+  const clock = radar(on, drawing)
+
+  on('agent.spawn', () => ({ model: 'm', agentId: 'a1' }))
+  on('tool.call', () => answered({ stdout: '' }))
+  on('tool.check', () => ({ decision: 'ask' }) as never)
+
+  await begin($)
+  await spawn($, 'frontend-developer')
+  await finish($)
+
+  const ui = await row($, 'ToolUse')
+
+  expect(await ui.find({ type: 'Text', text: /ENGINE/ })).toBeUndefined()
+
+  await $.tool.check({ tool: 'Bash', input: { command: 'rm x' }, agentId: 'a1' } as never)
+  expect(await ui.find({ type: 'Text', text: /ENGINE ToolUse/ })).toBeDefined()
+
+  await $.tool.call({ tool: 'Bash', command: 'rm x', agentId: 'a1' } as never)
+  expect(await ui.find({ type: 'Text', text: /ENGINE/ })).toBeUndefined()
+
+  await finish($, 'answer', 'a1')
+  expect(await ui.find({ type: 'Text', text: /ENGINE ToolUse/ })).toBeDefined()
+  await clock.advance(6 * MS)
+  await ui.unmount()
+})
+
+test('a call that failed or was cut keeps its row in view', async ($, on) => {
+  radar(on, drawing)
+  await begin($)
+
+  for (const [component, props] of [
+    ['ToolUse', { isErrored: true }],
+    ['ToolUse', { isInterrupted: true }],
+    ['ToolResult', { isErrored: true }],
+    ['ToolGroup', { calls: [{ ...ROWS.ToolGroup.calls[0], isErrored: true }] }]
+  ] as const) {
+    const ui = await row($, component, props)
+
+    expect(await ui.find({ type: 'Text', text: new RegExp(`ENGINE ${component}`) })).toBeDefined()
+    await ui.unmount()
+  }
+})
+
+test('the reply and everything else the radar must not touch is drawn by the engine, working or not', async ($, on) => {
+  radar(on, drawing)
+  await begin($)
+
+  for (const component of [
+    'AssistantMessage',
+    'UserMessage',
+    'TurnDuration',
+    'InfoNotice',
+    'SessionMode',
+    'PromptHint',
+    'CommandOutput'
+  ]) {
+    const ui = await $.ui.mount({
+      plugin: 'agent-radar',
+      surface: 'terminal',
+      component,
+      requestId: `row-${component}`,
+      props: { text: 'final answer' } as never
+    } as never)
+
+    expect(await ui.find({ type: 'Text', text: new RegExp(`^ENGINE ${component}$`) })).toBeDefined()
+    await ui.unmount()
+  }
 })
