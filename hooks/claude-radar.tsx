@@ -1,4 +1,4 @@
-import type { AgentPhase, ChecklistTask, ClaudeRadarState } from '../types'
+import type { AgentPhase, ChecklistTask, ClaudeRadarState, SubagentState, SubagentStatus } from '../types'
 
 /** The radar's state before anything has happened: on by default, nothing running, nothing to show. */
 export const initialState = (): ClaudeRadarState => ({
@@ -220,18 +220,20 @@ export const collapseIfDue = (state: ClaudeRadarState, now: number): ClaudeRadar
   return finishedAt !== null && !isCollapsed && now - finishedAt >= COLLAPSE_MS ? patchChecklist(state, { isCollapsed: true }) : state
 }
 
-/** One step of the timer: the animation moves on and a panel that has been finished long enough folds. */
+/** One step of the timer: the animation moves on, a panel that has been finished long enough folds and finished subagents are retired. */
 export const advance = (state: ClaudeRadarState, now: number): ClaudeRadarState => {
-  const next = collapseIfDue(state, now)
+  const next = pruneFinished(collapseIfDue(state, now), now)
 
   return { ...next, tick: next.tick + 1 }
 }
 
-/** Whether the timer has something to move: a turn at work or waiting, or a finished panel not yet folded. */
+/** Whether the timer has something to move: a turn at work or waiting, a finished panel not yet folded, or any subagent still listed (running, or finished and not yet retired). */
 export const isLive = (state: ClaudeRadarState) => {
   const { phase, finishedAt, isCollapsed } = state.checklist
 
-  return phase === 'working' || phase === 'needsYou' || (finishedAt !== null && !isCollapsed)
+  return (
+    phase === 'working' || phase === 'needsYou' || (finishedAt !== null && !isCollapsed) || Object.keys(state.subagents).length > 0
+  )
 }
 
 /** How the header reads: what it says, the figure that goes with it and the tone that colours the first. */
@@ -299,4 +301,205 @@ export const layoutOf = (rows: readonly TaskRow[], bodyColumns: number) => {
   const longest = rows.reduce((most, row) => Math.max(most, row.name.length), 1)
 
   return { showBars, nameWidth: Math.max(1, Math.min(longest, inner - fixed)) }
+}
+
+/** How long a finished subagent stays listed before it is retired, in milliseconds. */
+export const RETIRE_MS = 5000
+
+/** Below this many columns the subagents drop their status column. */
+export const STATUS_MIN_COLUMNS = 40
+
+type Subagents = ClaudeRadarState['subagents']
+
+/** What a spawn tells about the subagent it started. */
+export type SubagentSpawn = {
+  id: string
+  name: string
+  task?: string | null
+  parentId?: string
+  sessionId?: string
+}
+
+/** Whether the radar follows this agent; ids are keys, so inherited names do not count. */
+const isKnown = (state: ClaudeRadarState, id: string) => Object.prototype.hasOwnProperty.call(state.subagents, id)
+
+/** The same state with `patch` laid over one subagent. */
+const patchSubagent = (state: ClaudeRadarState, id: string, patch: Partial<SubagentState>): ClaudeRadarState => ({
+  ...state,
+  subagents: { ...state.subagents, [id]: { ...state.subagents[id]!, ...patch } }
+})
+
+/** Whether a subagent is still at work: running or waiting for the person. */
+const isActive = (status: SubagentStatus) => status === 'working' || status === 'needsYou'
+
+/** A subagent that started: working from `now`, under its own id so two runs of one agent never merge. A second spawn with a known id changes nothing. */
+export const spawnSubagent = (state: ClaudeRadarState, spawn: SubagentSpawn, now: number): ClaudeRadarState => {
+  if (isKnown(state, spawn.id)) return state
+
+  const agent: SubagentState = {
+    id: spawn.id,
+    sessionId: spawn.sessionId ?? '',
+    name: spawn.name.trim() || 'agent',
+    task: spawn.task?.trim() || null,
+    activity: null,
+    status: 'working',
+    startedAt: now,
+    finishedAt: null
+  }
+
+  if (spawn.parentId) agent.parentId = spawn.parentId
+
+  return { ...state, subagents: { ...state.subagents, [spawn.id]: agent } }
+}
+
+/** Looks like a test run: `test`, `jest`, `vitest`, `pytest` at the start of a word (so `latest` does not count). */
+const TEST_COMMAND = /(?<![a-z])(?:test|jest|vitest|pytest)/i
+
+/** What a tool call says about the work, in plain words and never a path, a command or code; `null` for a tool the radar does not know, so the activity stays as it was. */
+export const activityOf = (tool: string, command?: string): string | null => {
+  switch (tool) {
+    case 'Read':
+      return 'Reading project files'
+    case 'Glob':
+    case 'Grep':
+    case 'WebSearch':
+    case 'WebFetch':
+      return 'Searching project information'
+    case 'Edit':
+    case 'Write':
+    case 'NotebookEdit':
+      return 'Updating project files'
+    case 'Bash':
+      return TEST_COMMAND.test(command ?? '') ? 'Running tests' : 'Running a command'
+    case 'Agent':
+    case 'Task':
+      return 'Delegating work'
+    default:
+      return null
+  }
+}
+
+/** A call of the subagent's own: its activity becomes `activity` (kept when `null`), and a wait or a finish is over, the agent is working again. An agent not followed changes nothing. */
+export const workSubagent = (state: ClaudeRadarState, id: string, activity: string | null): ClaudeRadarState => {
+  if (!isKnown(state, id)) return state
+
+  const agent = state.subagents[id]!
+  const isChanged = (activity !== null && activity !== agent.activity) || agent.status !== 'working'
+
+  if (!isChanged) return state
+
+  return patchSubagent(state, id, {
+    activity: activity ?? agent.activity,
+    status: 'working',
+    finishedAt: null
+  })
+}
+
+/** The subagent waits for the person's permission; only while it is working. */
+export const askSubagent = (state: ClaudeRadarState, id: string): ClaudeRadarState =>
+  isKnown(state, id) && state.subagents[id]!.status === 'working' ? patchSubagent(state, id, { status: 'needsYou' }) : state
+
+/** The end of a subagent's turn: answered is done, interrupted is stopped, an error or a refusal is failed. The first end stands: one already finished is left as it is (a new call revives it, see `workSubagent`). */
+export const finishSubagent = (state: ClaudeRadarState, id: string, reason: TurnReason, now: number): ClaudeRadarState => {
+  if (!isKnown(state, id) || !isActive(state.subagents[id]!.status)) return state
+
+  const status: SubagentStatus = reason === 'answer' ? 'done' : reason === 'aborted' ? 'stopped' : 'failed'
+
+  return patchSubagent(state, id, { status, finishedAt: now })
+}
+
+/** Takes out the subagents that finished `RETIRE_MS` ago or more; the same state when none is due. */
+export const pruneFinished = (state: ClaudeRadarState, now: number): ClaudeRadarState => {
+  const kept = Object.entries(state.subagents).filter(([, agent]) => agent.finishedAt === null || now - agent.finishedAt < RETIRE_MS)
+
+  return kept.length === Object.keys(state.subagents).length ? state : { ...state, subagents: Object.fromEntries(kept) }
+}
+
+/** How many subagents are at work (running or waiting for the person). */
+export const activeCount = (subagents: Subagents) => Object.values(subagents).filter(agent => isActive(agent.status)).length
+
+/** The two lines of a subagent, as text: the mark, the name and the time, then the activity and the status. */
+export type SubagentRow = {
+  id: string
+  mark: '●' | '✓' | '✗' | '■'
+  name: string
+  time: string
+  activity: string
+  label: string
+  status: SubagentStatus
+  /** 0 for a flat list or a root; one more per known ancestor. */
+  depth: number
+}
+
+const SUBAGENT_MARKS = { working: '●', needsYou: '●', done: '✓', failed: '✗', stopped: '■' } as const
+const SUBAGENT_LABELS = { working: 'Working', needsYou: 'Needs you', done: 'Done', failed: 'Failed', stopped: 'Stopped' } as const
+
+/** The row of a subagent: its own time (frozen once it ended) and, as activity, what its tools say, else its task, else `Working`. */
+export const subagentRowOf = (agent: SubagentState, now: number, depth = 0): SubagentRow => ({
+  id: agent.id,
+  mark: SUBAGENT_MARKS[agent.status],
+  name: agent.name,
+  time: elapsed((agent.finishedAt ?? now) - agent.startedAt),
+  activity: (agent.activity ?? (agent.task === null ? '' : clean(agent.task))) || 'Working',
+  label: SUBAGENT_LABELS[agent.status],
+  status: agent.status,
+  depth
+})
+
+/** The rows in start order. A hierarchy shows only where `parentId` names an agent still listed: its children follow it, one level in; otherwise the list is flat. */
+export const subagentRowsOf = (subagents: Subagents, now: number): SubagentRow[] => {
+  const all = Object.values(subagents).sort((a, b) => a.startedAt - b.startedAt)
+  const children = new Map<string, SubagentState[]>()
+  const roots: SubagentState[] = []
+
+  for (const agent of all) {
+    const parent = agent.parentId
+
+    if (parent !== undefined && parent !== agent.id && Object.prototype.hasOwnProperty.call(subagents, parent)) {
+      children.set(parent, [...(children.get(parent) ?? []), agent])
+    } else {
+      roots.push(agent)
+    }
+  }
+
+  const rows: SubagentRow[] = []
+  const seen = new Set<string>()
+
+  const walk = (agent: SubagentState, depth: number) => {
+    if (seen.has(agent.id)) return
+
+    seen.add(agent.id)
+    rows.push(subagentRowOf(agent, now, depth))
+    for (const child of children.get(agent.id) ?? []) walk(child, depth + 1)
+  }
+
+  for (const agent of roots) walk(agent, 0)
+  // Parents that point at each other have no root: list them flat rather than lose them.
+  for (const agent of all) walk(agent, 0)
+
+  return rows
+}
+
+/** What the subagents section draws in `lines` rows (its header included): the rows that fit, active ones first and in their order, how many were left out, and whether the status column fits. `null` when there are no subagents. */
+export const subagentViewOf = (subagents: Subagents, now: number, lines: number, bodyColumns: number) => {
+  const all = subagentRowsOf(subagents, now)
+
+  if (all.length === 0) return null
+
+  // Two rows each; when some are left out, one more row says how many.
+  const room = Number.isFinite(lines) ? Math.max(0, lines) : 0
+  const slots = Math.min(all.length, Math.max(0, Math.floor((room - (room - 1 >= all.length * 2 ? 1 : 2)) / 2)))
+  const keep = new Set(
+    all
+      .map((row, index) => index)
+      .sort((a, b) => Number(!isActive(all[a]!.status)) - Number(!isActive(all[b]!.status)) || a - b)
+      .slice(0, slots)
+  )
+
+  return {
+    active: activeCount(subagents),
+    rows: all.filter((_, index) => keep.has(index)),
+    hidden: all.length - slots,
+    showStatus: bodyColumns >= STATUS_MIN_COLUMNS
+  }
 }

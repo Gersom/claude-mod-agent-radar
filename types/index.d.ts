@@ -13,6 +13,8 @@ export type SubagentState = {
   /** What it is doing now, from its own tool calls; null until one is seen. */
   activity: string | null
   status: SubagentStatus
+  /** The id of the agent whose loop spawned it (`parentAgentId`); absent when the main loop did, so no hierarchy is drawn without it. */
+  parentId?: string
   startedAt: number
   finishedAt: number | null
 }

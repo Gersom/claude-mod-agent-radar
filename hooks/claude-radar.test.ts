@@ -1,24 +1,33 @@
 import { expect, mock, test } from 'claude-code/testing'
 
 import {
+  activityOf,
   addTask,
   advance,
+  askSubagent,
   askUser,
   bar,
   collapseIfDue,
   didRun,
   elapsed,
+  finishSubagent,
   finishTurn,
   headlineOf,
   initialState,
   isLive,
   layoutOf,
   normalizeActivity,
+  pruneFinished,
   resumeWork,
   rowsOf,
+  spawnSubagent,
   startTurn,
+  subagentRowOf,
+  subagentRowsOf,
+  subagentViewOf,
   taskIdOf,
   updateTask,
+  workSubagent,
   writeTodos
 } from './claude-radar'
 
@@ -912,5 +921,542 @@ test('keeps what another hook of the band draws, with the panel open and folded'
 
   expect(await ui.find({ type: 'Text', text: /OTHER BAND/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /All done/ })).toBeDefined()
+  await ui.unmount()
+})
+
+const spawned = (state: ReturnType<typeof initialState>, id: string, name = 'frontend-developer', now = 0, extra: object = {}) =>
+  spawnSubagent(state, { id, name, task: 'Building login components', ...extra }, now)
+
+test('a spawn adds a working subagent under its own id, with its real name and task', async () => {
+  const state = spawnSubagent(initialState(), { id: 'a1', name: 'frontend-developer', task: 'Building login components' }, 5000)
+
+  expect(state.subagents['a1']).toEqual({
+    id: 'a1',
+    sessionId: '',
+    name: 'frontend-developer',
+    task: 'Building login components',
+    activity: null,
+    status: 'working',
+    startedAt: 5000,
+    finishedAt: null
+  })
+  expect(spawnSubagent(initialState(), { id: 'a1', name: 'Explore' }, 0).subagents['a1']?.task).toBeNull()
+  expect(spawnSubagent(initialState(), { id: 'a1', name: 'Explore', task: '  ' }, 0).subagents['a1']?.task).toBeNull()
+  // Only the subagents change.
+  expect(state.checklist).toEqual(initialState().checklist)
+})
+
+test('runs of the same agent are independent entries, and a repeated id changes nothing', async () => {
+  let state = spawned(initialState(), 'a1', 'code-reviewer', 1000)
+
+  state = spawned(state, 'a2', 'code-reviewer', 2000)
+  state = workSubagent(state, 'a1', 'Reading project files')
+
+  expect(Object.keys(state.subagents)).toEqual(['a1', 'a2'])
+  expect(state.subagents['a1']?.activity).toBe('Reading project files')
+  expect(state.subagents['a2']?.activity).toBeNull()
+  expect(state.subagents['a1']?.name).toBe(state.subagents['a2']?.name)
+  expect(spawned(state, 'a1', 'other', 9000)).toBe(state)
+
+  state = finishSubagent(state, 'a1', 'answer', 3000)
+  expect(state.subagents['a1']?.status).toBe('done')
+  expect(state.subagents['a2']?.status).toBe('working')
+})
+
+test('the parent is kept only when the spawn names one, and the hierarchy shows only where it is known', async () => {
+  const flat = spawned(spawned(initialState(), 'a1', 'one', 1), 'a2', 'two', 2)
+
+  expect('parentId' in flat.subagents['a1']!).toBe(false)
+  expect(subagentRowsOf(flat.subagents, 3).map(row => row.depth)).toEqual([0, 0])
+
+  const nested = spawned(spawned(spawned(initialState(), 'a1', 'lead', 1), 'a3', 'solo', 2), 'a2', 'helper', 3, { parentId: 'a1' })
+
+  expect(nested.subagents['a2']?.parentId).toBe('a1')
+  // The child follows its parent, one level in, whatever the start order.
+  expect(subagentRowsOf(nested.subagents, 4).map(row => [row.name, row.depth])).toEqual([
+    ['lead', 0],
+    ['helper', 1],
+    ['solo', 0]
+  ])
+
+  // A parent that is not listed (the main loop's id, or one already retired): flat.
+  const orphan = spawned(initialState(), 'a2', 'helper', 3, { parentId: 'gone' })
+
+  expect(subagentRowsOf(orphan.subagents, 4).map(row => row.depth)).toEqual([0])
+
+  // Parents pointing at each other lose nothing.
+  const loop = spawned(spawned(initialState(), 'x', 'x', 1, { parentId: 'y' }), 'y', 'y', 2, { parentId: 'x' })
+
+  expect(subagentRowsOf(loop.subagents, 3)).toHaveLength(2)
+})
+
+test('the activity comes from the tool, in plain words and never a path or a command', async () => {
+  expect(activityOf('Read')).toBe('Reading project files')
+  for (const tool of ['Glob', 'Grep', 'WebSearch', 'WebFetch']) expect(activityOf(tool)).toBe('Searching project information')
+  for (const tool of ['Edit', 'Write', 'NotebookEdit']) expect(activityOf(tool)).toBe('Updating project files')
+  for (const tool of ['Agent', 'Task']) expect(activityOf(tool)).toBe('Delegating work')
+
+  for (const command of ['npm test', 'bun run test', 'npx vitest run', 'pytest -q', 'npx jest', 'npm run test:unit'])
+    expect(activityOf('Bash', command)).toBe('Running tests')
+
+  for (const command of ['ls -la /secret/path', 'git status', 'cat latest.log', ''])
+    expect(activityOf('Bash', command)).toBe('Running a command')
+
+  expect(activityOf('Bash')).toBe('Running a command')
+  expect(activityOf('TodoWrite')).toBeNull()
+  expect(activityOf('mcp__x__y')).toBeNull()
+})
+
+test('a tool call sets the activity; an unknown tool or agent changes nothing', async () => {
+  const state = spawned(initialState(), 'a1')
+
+  expect(workSubagent(state, 'a1', 'Updating project files').subagents['a1']?.activity).toBe('Updating project files')
+  expect(workSubagent(workSubagent(state, 'a1', 'Running tests'), 'a1', null).subagents['a1']?.activity).toBe('Running tests')
+  expect(workSubagent(state, 'a1', null)).toBe(state)
+  expect(workSubagent(state, 'nobody', 'Running tests')).toBe(state)
+  expect(workSubagent(state, 'constructor', 'Running tests')).toBe(state)
+  expect(workSubagent(state, 'a1', 'Running tests')).not.toBe(state)
+})
+
+test('a subagent ends done, stopped or failed with its time frozen; the first end stands, a new call revives it', async () => {
+  const state = spawned(initialState(), 'a1', 'x', 1000)
+
+  expect(finishSubagent(state, 'a1', 'answer', 4000).subagents['a1']).toMatchObject({ status: 'done', finishedAt: 4000 })
+  expect(finishSubagent(state, 'a1', 'aborted', 4000).subagents['a1']?.status).toBe('stopped')
+  expect(finishSubagent(state, 'a1', 'error', 4000).subagents['a1']?.status).toBe('failed')
+  expect(finishSubagent(state, 'a1', 'refusal', 4000).subagents['a1']?.status).toBe('failed')
+  expect(finishSubagent(state, 'nobody', 'answer', 4000)).toBe(state)
+
+  const done = finishSubagent(state, 'a1', 'answer', 4000)
+
+  // A second end does not rewrite the first.
+  expect(finishSubagent(done, 'a1', 'error', 9000)).toBe(done)
+  expect(subagentRowOf(done.subagents['a1']!, 999_000).time).toBe('3s')
+
+  const back = workSubagent(done, 'a1', 'Reading project files')
+
+  expect(back.subagents['a1']).toMatchObject({ status: 'working', finishedAt: null })
+  // The main turn is not touched by any of it.
+  expect(done.checklist).toEqual(state.checklist)
+})
+
+test('a subagent waits for the person only while it works, and its next call or end lifts it', async () => {
+  const state = spawned(initialState(), 'a1')
+  const waiting = askSubagent(state, 'a1')
+
+  expect(waiting.subagents['a1']?.status).toBe('needsYou')
+  expect(askSubagent(state, 'nobody')).toBe(state)
+  expect(askSubagent(waiting, 'a1')).toBe(waiting)
+  expect(askSubagent(finishSubagent(state, 'a1', 'answer', 1), 'a1').subagents['a1']?.status).toBe('done')
+  expect(workSubagent(waiting, 'a1', null).subagents['a1']?.status).toBe('working')
+  expect(finishSubagent(waiting, 'a1', 'aborted', 1).subagents['a1']?.status).toBe('stopped')
+  // The main checklist stays as it was.
+  expect(waiting.checklist.phase).toBe(state.checklist.phase)
+})
+
+test('finished subagents are retired after 5 seconds, and the timer lives while any is listed', async () => {
+  let state = spawned(spawned(initialState(), 'a1', 'one', 0), 'a2', 'two', 0)
+
+  expect(isLive(state)).toBe(true)
+
+  state = finishSubagent(state, 'a1', 'answer', 10_000)
+  expect(pruneFinished(state, 14_999)).toBe(state)
+  expect(Object.keys(pruneFinished(state, 15_000).subagents)).toEqual(['a2'])
+  // One still working is never retired, however long it takes.
+  expect(Object.keys(pruneFinished(state, 999_999).subagents)).toEqual(['a2'])
+
+  expect(isLive(pruneFinished(state, 15_000))).toBe(true)
+  expect(advance(state, 15_000)).toMatchObject({ tick: 1, subagents: { a2: { status: 'working' } } })
+  expect('a1' in advance(state, 15_000).subagents).toBe(false)
+
+  const last = pruneFinished(finishSubagent(state, 'a2', 'error', 10_000), 15_000)
+
+  expect(last.subagents).toEqual({})
+  expect(isLive(last)).toBe(false)
+})
+
+test('the rows show the name, its own time, the activity (or task, or Working) and the status', async () => {
+  let state = spawned(initialState(), 'a1', 'frontend-developer', 0)
+
+  state = spawned(state, 'a2', 'backend-developer', 35_000, { task: null })
+  state = workSubagent(state, 'a1', 'Reading project files')
+
+  expect(subagentRowsOf(state.subagents, 80_000).map(row => `${row.mark} ${row.name} ${row.time} | ${row.activity} | ${row.label}`)).toEqual([
+    '● frontend-developer 1m 20s | Reading project files | Working',
+    '● backend-developer 45s | Working | Working'
+  ])
+  // Before any tool is seen the task shows, cleaned of paths and code.
+  expect(subagentRowsOf(spawned(initialState(), 'a1', 'x', 0, { task: 'Fix `foo()` in /src/a.ts please' }).subagents, 1)[0]?.activity).toBe('Fix in please')
+  expect(subagentRowsOf(spawned(initialState(), 'a1', 'x', 0, { task: '/src/a.ts' }).subagents, 1)[0]?.activity).toBe('Working')
+
+  const marks = (status: 'needsYou' | 'done' | 'failed' | 'stopped') => {
+    const base = spawned(initialState(), 'a1')
+    const next =
+      status === 'needsYou'
+        ? askSubagent(base, 'a1')
+        : finishSubagent(base, 'a1', status === 'done' ? 'answer' : status === 'failed' ? 'error' : 'aborted', 1)
+
+    return subagentRowsOf(next.subagents, 2).map(row => `${row.mark} ${row.label}`)[0]
+  }
+
+  expect(marks('needsYou')).toBe('● Needs you')
+  expect(marks('done')).toBe('✓ Done')
+  expect(marks('failed')).toBe('✗ Failed')
+  expect(marks('stopped')).toBe('■ Stopped')
+})
+
+test('with little room the active subagents come first and the rest is counted; narrow drops the status', async () => {
+  let state = spawned(initialState(), 'a1', 'old-one', 0)
+
+  state = finishSubagent(state, 'a1', 'answer', 1)
+  state = spawned(spawned(state, 'a2', 'busy-1', 2), 'a3', 'busy-2', 3)
+
+  expect(subagentViewOf(initialState().subagents, 0, 10, 80)).toBeNull()
+
+  const roomy = subagentViewOf(state.subagents, 10, 7, 80)
+
+  expect(roomy).toMatchObject({ active: 2, hidden: 0, showStatus: true })
+  expect(roomy?.rows.map(row => row.name)).toEqual(['old-one', 'busy-1', 'busy-2'])
+
+  // Header + 2 subagents + the "more" row: the finished one is the one left out.
+  const tight = subagentViewOf(state.subagents, 10, 6, 80)
+
+  expect(tight?.rows.map(row => row.name)).toEqual(['busy-1', 'busy-2'])
+  expect(tight?.hidden).toBe(1)
+
+  expect(subagentViewOf(state.subagents, 10, 4, 80)?.rows.map(row => row.name)).toEqual(['busy-1'])
+  expect(subagentViewOf(state.subagents, 10, 4, 80)?.hidden).toBe(2)
+  // No room for even one: the header and the count remain.
+  expect(subagentViewOf(state.subagents, 10, 3, 80)).toMatchObject({ rows: [], hidden: 3, active: 2 })
+  expect(subagentViewOf(state.subagents, 10, -4, 80)).toMatchObject({ rows: [], hidden: 3 })
+  expect(subagentViewOf(state.subagents, 10, 7, 39)?.showStatus).toBe(false)
+  expect(subagentViewOf(state.subagents, 10, 7, 40)?.showStatus).toBe(true)
+})
+
+/** The bottom for subagents: the radar's, plus an `agent.spawn` that starts the agents the test names, in order. */
+const squad = (on: any, ...ids: string[]) => {
+  const clock = radar(on)
+
+  on('agent.spawn', () => ({ model: 'm', agentId: ids.shift() }))
+  on('tool.call', () => answered({ stdout: '' }))
+
+  return clock
+}
+
+const spawn = ($: any, subagentType: string, description = 'Building login components', extra: object = {}) =>
+  $.agent.spawn({ prompt: 'p', description, subagentType, ...extra })
+
+const mount = ($: any, bodyColumns = 80, maxRows = 10) =>
+  $.ui.mount({
+    plugin: 'agent-radar',
+    surface: 'terminal',
+    ...BAND,
+    props: { hasSurvey: false, isWorking: true, maxRows, bodyColumns } as never
+  })
+
+test('a spawn goes through untouched and the subagent shows with its name, time and state', async ($, on) => {
+  const clock = squad(on, 'a1')
+
+  await begin($)
+
+  const result = await spawn($, 'frontend-developer')
+
+  expect(result).toEqual({ model: 'm', agentId: 'a1' })
+
+  await clock.advance(80 * MS)
+
+  const ui = await mount($)
+
+  expect(await ui.find({ type: 'Text', text: /^Subagents$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^1 active$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^frontend-developer$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^1m 20s$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^Building login components$/ })).toBeDefined()
+  // The main checklist's line and the subagent's own status.
+  expect(await ui.findAll({ type: 'Text', text: /^Working$/ })).toHaveLength(2)
+  expect(await ui.find({ type: 'Text', text: /^●$/ })).toBeDefined()
+  // Inside the same frame as the checklist, not in another block.
+  expect(await isFramed(ui)).toBe(true)
+  expect((await ui.findAll({ type: 'Box' })).filter((box: { props?: { borderStyle?: string } }) => box.props?.borderStyle === 'round')).toHaveLength(1)
+  await ui.unmount()
+})
+
+test('a refused spawn adds nothing, and its answer goes through as it is', async ($, on) => {
+  radar(on)
+  on('agent.spawn', () => ({ deny: 'no' }) as never)
+
+  await begin($)
+  expect(await spawn($, 'Explore')).toEqual({ deny: 'no' })
+
+  const ui = await mount($)
+
+  expect(await ui.find({ type: 'Text', text: /Subagents/ })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('two parallel subagents with the same name are kept apart', async ($, on) => {
+  const clock = squad(on, 'a1', 'a2')
+
+  await begin($)
+  await spawn($, 'code-reviewer', 'Reviewing the auth module')
+  await clock.advance(30 * MS)
+  await spawn($, 'code-reviewer', 'Reviewing the billing module')
+
+  const ui = await mount($)
+
+  expect(await ui.findAll({ type: 'Text', text: /^code-reviewer$/ })).toHaveLength(2)
+  expect(await ui.find({ type: 'Text', text: /^2 active$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^Reviewing the auth module$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^Reviewing the billing module$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^30s$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^0s$/ })).toBeDefined()
+
+  // Finishing one leaves the other working.
+  await finish($, 'answer', 'a1')
+  expect(await ui.find({ type: 'Text', text: /^1 active$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^Done$/ })).toBeDefined()
+  // The main checklist's line and the one subagent still working.
+  expect(await ui.findAll({ type: 'Text', text: /^Working$/ })).toHaveLength(2)
+  await ui.unmount()
+})
+
+test('the activity follows the tools of that subagent only', async ($, on) => {
+  squad(on, 'a1', 'a2')
+
+  await begin($)
+  await spawn($, 'one', 'Task one')
+  await spawn($, 'two', 'Task two')
+
+  const ui = await mount($)
+
+  await $.tool.call({ tool: 'Read', file_path: '/secret/file.ts', agentId: 'a1' } as never)
+  expect(await ui.find({ type: 'Text', text: /^Reading project files$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^Task two$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^Task one$/ })).toBeUndefined()
+
+  await $.tool.call({ tool: 'Bash', command: 'npm test -- /secret/dir', agentId: 'a1' } as never)
+  expect(await ui.find({ type: 'Text', text: /^Running tests$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /secret/ })).toBeUndefined()
+
+  // A tool the radar does not know leaves the activity as it was.
+  await $.tool.call({ tool: 'TodoWrite', todos: [], agentId: 'a1' } as never)
+  expect(await ui.find({ type: 'Text', text: /^Running tests$/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('a subagent call neither changes the main checklist nor goes through altered', async ($, on) => {
+  radar(on)
+  on('agent.spawn', () => ({ model: 'm', agentId: 'a1' }))
+
+  const result = { ref: 3, result: { stdout: 'hi' }, text: 'hi' } as never
+
+  on('tool.call', () => result)
+
+  await begin($)
+  await spawn($, 'one')
+  expect(await $.tool.call({ tool: 'TodoWrite', todos: todos(['Sub step', 'pending']), agentId: 'a1' } as never)).toEqual(result)
+
+  const ui = await mount($)
+
+  expect(await ui.find({ type: 'Text', text: /Sub step/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /Working on your request/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('a subagent that ends shows Done, then is gone after 5 seconds and the section with it', async ($, on) => {
+  const clock = squad(on, 'a1')
+
+  await begin($)
+  await spawn($, 'frontend-developer')
+  await clock.advance(65 * MS)
+  await finish($, 'answer', 'a1')
+
+  const ui = await mount($)
+
+  expect(await ui.find({ type: 'Text', text: /^Done$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^✓$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^0 active$/ })).toBeDefined()
+
+  // The time is frozen at the end.
+  await clock.advance(4 * MS)
+  expect(await ui.find({ type: 'Text', text: /^1m 05s$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^frontend-developer$/ })).toBeDefined()
+
+  await clock.advance(1 * MS)
+  expect(await ui.find({ type: 'Text', text: /frontend-developer/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /^Subagents$/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Button', key: 'toggle' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('an error ends the subagent as Failed, an interrupt as Stopped', async ($, on) => {
+  squad(on, 'a1', 'a2')
+
+  await begin($)
+  await spawn($, 'one')
+  await spawn($, 'two')
+  await finish($, 'error', 'a1')
+  await finish($, 'aborted', 'a2')
+
+  const ui = await mount($)
+
+  expect(await ui.find({ type: 'Text', text: /^Failed$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^✗$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^Stopped$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^■$/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('a permission question of a subagent shows Needs you for it alone, until its next call', async ($, on) => {
+  squad(on, 'a1', 'a2')
+  on('tool.check', () => ({ decision: 'ask' }) as never)
+
+  await begin($)
+  await spawn($, 'one')
+  await spawn($, 'two')
+
+  const ui = await mount($)
+
+  await $.tool.check({ tool: 'Bash', input: { command: 'rm x' }, agentId: 'a1' } as never)
+  expect(await ui.findAll({ type: 'Text', text: /^Needs you$/ })).toHaveLength(1)
+  expect(await ui.find({ type: 'Text', text: /^2 active$/ })).toBeDefined()
+  // The main turn did not ask.
+  expect(await ui.find({ type: 'Text', text: /Waiting for your permission/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /Build my landing page/ })).toBeDefined()
+
+  await $.tool.call({ tool: 'Bash', command: 'rm x', agentId: 'a1' } as never)
+  expect(await ui.find({ type: 'Text', text: /^Needs you$/ })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('the main turn ending does not close the subagents, nor they it', async ($, on) => {
+  const clock = squad(on, 'a1')
+
+  await begin($)
+  await spawn($, 'frontend-developer')
+  await finish($, 'answer')
+  await clock.advance(6 * MS)
+
+  // The main panel folded; the subagent, still working, stays in view inside the frame.
+  const ui = await mount($)
+
+  expect(await ui.find({ type: 'Text', text: /All done/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^frontend-developer$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^Working$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^1 active$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Button', key: 'toggle' })).toBeDefined()
+  expect(await isFramed(ui)).toBe(true)
+  // Folded: no checklist rows.
+  expect(await ui.find({ type: 'Text', text: /Working on your request/ })).toBeUndefined()
+
+  // Then it finishes; the main turn keeps its own end, and once retired the panel is the folded line again.
+  await finish($, 'answer', 'a1')
+  expect(await ui.find({ type: 'Text', text: /^Done$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /All done/ })).toBeDefined()
+  await clock.advance(5 * MS)
+  expect(await ui.find({ type: 'Text', text: /frontend-developer/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /All done/ })).toBeDefined()
+  expect(await isFramed(ui)).toBe(false)
+  await ui.unmount()
+})
+
+test('the main turn is still running when a subagent ends, and the section is hidden without subagents', async ($, on) => {
+  squad(on, 'a1')
+
+  await begin($)
+
+  const before = await mount($)
+
+  expect(await before.find({ type: 'Text', text: /Subagents/ })).toBeUndefined()
+  await before.unmount()
+
+  await spawn($, 'one')
+  await finish($, 'answer', 'a1')
+
+  const ui = await mount($)
+
+  expect(await ui.find({ type: 'Text', text: /All done/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /Build my landing page/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('subagents alone, before any turn, are drawn under the button', async ($, on) => {
+  squad(on, 'a1')
+
+  await spawn($, 'Explore', 'Mapping the repo')
+
+  const ui = await mount($)
+
+  expect(await ui.find({ type: 'Button', key: 'toggle' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^Explore$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /All done/ })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('OFF draws only the button, subagents or not, and ON brings them back', async ($, on) => {
+  squad(on, 'a1')
+
+  await begin($)
+  await spawn($, 'frontend-developer')
+
+  const ui = await mount($)
+
+  await ui.press({ key: 'toggle' })
+  expect(await ui.find({ type: 'Text', text: /frontend-developer/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Button', text: /Claude Radar: OFF/ })).toBeDefined()
+
+  await ui.press({ key: 'toggle' })
+  expect(await ui.find({ type: 'Text', text: /^frontend-developer$/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('with little room the status column goes and the rows are cut, the active first and the rest counted', async ($, on) => {
+  squad(on, 'a1', 'a2', 'a3')
+
+  await begin($)
+  await spawn($, 'first-agent')
+  await spawn($, 'second-agent')
+  await spawn($, 'third-agent')
+  await finish($, 'answer', 'a1')
+
+  // 1 checklist row + frame and header = 4; 4 rows left: the header, one subagent and "+2 more".
+  const tight = await mount($, 36, 8)
+
+  // Only the main checklist's own label: the subagent has no status column.
+  expect(await tight.findAll({ type: 'Text', text: /^Working$/ })).toHaveLength(1)
+  expect(await tight.find({ type: 'Text', text: /^Done$/ })).toBeUndefined()
+  expect(await tight.find({ type: 'Text', text: /^2 active$/ })).toBeDefined()
+  expect(await tight.find({ type: 'Text', text: /^\+2 more$/ })).toBeDefined()
+  expect(await tight.find({ type: 'Text', text: /^second-agent$/ })).toBeDefined()
+  expect(await tight.find({ type: 'Text', text: /^first-agent$/ })).toBeUndefined()
+
+  const name = await tight.find({ type: 'Text', text: /^second-agent$/ })
+
+  expect(name?.props?.wrap).toBe('truncate-end')
+  await tight.unmount()
+
+  const wide = await mount($, 80, 20)
+
+  expect(await wide.find({ type: 'Text', text: /^\+\d+ more$/ })).toBeUndefined()
+  expect(await wide.find({ type: 'Text', text: /^first-agent$/ })).toBeDefined()
+  expect(await wide.find({ type: 'Text', text: /^Done$/ })).toBeDefined()
+  expect((await wide.findAll({ type: 'Text', text: /^Working$/ })).length).toBeGreaterThan(1)
+  await wide.unmount()
+})
+
+test('a nested subagent shows under its parent only when the spawn names a parent that is listed', async ($, on) => {
+  squad(on, 'a1', 'a2')
+
+  await begin($)
+  await spawn($, 'lead')
+  await spawn($, 'helper', 'Helping', { parentAgentId: 'a1' })
+
+  const ui = await mount($)
+  const helper = await ui.find({ type: 'Text', text: /^helper$/ })
+  const lead = await ui.find({ type: 'Text', text: /^lead$/ })
+
+  expect(helper).toBeDefined()
+  expect(lead).toBeDefined()
+  expect(await ui.findAll({ type: 'Box', props: { paddingLeft: 2 } } as never)).not.toHaveLength(0)
   await ui.unmount()
 })
