@@ -16,3 +16,6 @@ export const initialState = (): ClaudeRadarState => ({
   subagents: {},
   tick: 0
 })
+
+/** The label of the header's button. */
+export const buttonLabel = (enabled: boolean) => `[ ● Claude Radar: ${enabled ? 'ON' : 'OFF'} ]`
