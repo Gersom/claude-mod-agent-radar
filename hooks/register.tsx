@@ -8,6 +8,8 @@ import {
   PANE_ID,
   PANE_ROWS,
   PANE_TITLE,
+  RETIRE_MS,
+  STATUS_MIN_COLUMNS,
   TICK_MS,
   activityOf,
   addTask,
@@ -15,11 +17,9 @@ import {
   askSubagent,
   askUser,
   buttonLabel,
-  collapseIfDue,
   didRun,
   finishSubagent,
   finishTurn,
-  headlineOf,
   hidesTools,
   initialState,
   isLive,
@@ -29,10 +29,8 @@ import {
   pruneFinished,
   resetSession,
   resumeWork,
-  rowsOf,
   spawnSubagent,
   startTurn,
-  subagentViewOf,
   taskIdOf,
   updateTask,
   workSubagent,
@@ -43,9 +41,7 @@ import type { PaneAgent } from './claude-radar'
 /** The key of `$.store` that keeps the ON/OFF choice between sessions. */
 const STORE_KEY = 'enabled'
 
-const BORDER_COLOR = '#4b5563'
-
-/** The colour of the header's first words by phase; `undefined` leaves the default. */
+/** The colour of the pane's phase label by phase; `undefined` leaves the default. */
 const TONE = {
   working: undefined,
   needsYou: '#facc15',
@@ -66,7 +62,7 @@ const SUBAGENT_TONE = {
   stopped: '#fb923c'
 } as const
 
-/** The radar's state: what the header and the next panels draw from. */
+/** The radar's state: what the band and the pane draw from. */
 const radar = atom({ plugin: 'agent-radar', key: 'claudeRadarState' } as const, initialState())
 
 /** Whether the tool rows are hidden: the one value the transcript's rows read, so they redraw when it flips and not on every tick of the state. */
@@ -109,7 +105,7 @@ const ensureEnabled = ($: EngineInterface) => {
   return restoring
 }
 
-/** The one timer that moves the animation, folds the finished panel and retires finished subagents; a reload starts the module over, without it. */
+/** The one timer, only while the pane is open: it moves the animation and the times in the pane and retires finished subagents; a reload starts the module over, without it. */
 let ticker: { cancel: () => void } | null = null
 
 const stop = () => {
@@ -117,19 +113,23 @@ const stop = () => {
   ticker = null
 }
 
-/** Starts the timer unless it runs or the radar is OFF (nothing moves then); it stops itself once there is nothing left to move. */
+/** Starts the timer unless it runs, the radar is OFF, the pane is closed (nobody sees a tick then: nothing is redrawn) or there is nothing to move; it stops itself when any of those stops holding. */
 const start = async ($: EngineInterface) => {
   if (ticker !== null) return
 
   await ensureEnabled($)
 
-  if (ticker !== null || !(await read($, radar)).claudeRadarEnabled) return
+  if (ticker !== null || !(await read($, paneOpen))) return
+
+  const state = await read($, radar)
+
+  if (!state.claudeRadarEnabled || !isLive(state)) return
 
   ticker = $.clock.every(TICK_MS, async () => {
     const time = await $.clock.now()
-    const state = await change($, current => advance(current, time))
+    const current = await change($, previous => advance(previous, time))
 
-    if (!state.claudeRadarEnabled || !isLive(state)) stop()
+    if (!current.claudeRadarEnabled || !isLive(current) || !(await read($, paneOpen))) stop()
   })
 }
 
@@ -139,6 +139,7 @@ const closePane = async ($: EngineInterface) => {
 
   await $.ui.close({ id: PANE_ID })
   await update($, paneOpen, () => false)
+  stop()
 }
 
 /** The detail button: opens the pane, or closes it if it is open. Only a press opens it, never the radar on its own. A surface that places no panes gets a toast and no pane left waiting. */
@@ -149,6 +150,8 @@ const togglePane = async ($: EngineInterface) => {
 
   if (opened.isPlaced) {
     await update($, paneOpen, () => true)
+    // The pane is on screen: the times and the animation move while there is work.
+    await start($)
   } else {
     // Open but undrawn: leave nothing waiting to pop up later on its own.
     await $.ui.close({ id: PANE_ID })
@@ -169,15 +172,7 @@ const setEnabled = async ($: EngineInterface, enabled: boolean) => {
     // Not saved: the choice still holds for this session.
   }
 
-  if (!enabled) {
-    stop()
-  } else if (isLive(await read($, radar))) {
-    // Back ON in the middle of a turn: what folded or retired while nobody looked goes now, and the timer goes on.
-    const time = await $.clock.now()
-
-    await change($, state => pruneFinished(collapseIfDue(state, time), time))
-    await start($)
-  }
+  if (!enabled) stop()
 
   $.ui.toast(`Claude Radar: ${enabled ? 'ON' : 'OFF'}`)
 }
@@ -203,6 +198,7 @@ export const register: Register = on => {
     const closed = await next(e)
 
     await update($, paneOpen, () => false)
+    stop()
 
     return closed
   })
@@ -238,12 +234,17 @@ export const register: Register = on => {
 
     if (e.agentId === undefined) {
       await change($, state => finishTurn(state, e.reason, time))
-      await start($)
     } else {
       // A subagent's turn ends that subagent, never the main one; an agent not followed changes nothing.
       const id = e.agentId
 
       await change($, state => finishSubagent(state, id, e.reason, time))
+      // It leaves the live list a moment later; one write, with the pane open or not (the timer, if running, does it too).
+      $.clock.after(RETIRE_MS, async () => {
+        const later = await $.clock.now()
+
+        await change($, state => pruneFinished(state, later))
+      })
     }
 
     return next(e)
@@ -333,189 +334,50 @@ export const register: Register = on => {
     return <Box />
   })
 
+  // The band is one line: the name and the two buttons. All the content is in the detail pane, which only a press of the button opens:
+  // a pane the mod opened by itself would not be placed under 144 columns, so nothing is ever opened unasked.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     // Other hooks' bands stay; a survey keeps the band to itself.
     const below = await next(e)
 
     if (e.props.hasSurvey) return below
 
-    const { claudeRadarEnabled: enabled, checklist, subagents, tick } = await read($, radar)
+    const { claudeRadarEnabled: enabled } = await read($, radar)
     const isPaneOpen = await read($, paneOpen)
     const { Box, Button, Text } = $.ui.resolve(e)
 
-    // The button stays visible whether the radar is ON or OFF, and whether Claude is idle or working.
-    const button = (
+    // The ON/OFF button stays visible whether the radar is ON or OFF; the detail button only when ON, to its left.
+    const toggle = (
       <Button key="toggle" plain dimColor onPress={() => void setEnabled($, !enabled)}>
         {buttonLabel(enabled)}
       </Button>
     )
 
-    // ON: the detail button beside it, to its left. OFF: the ON/OFF button alone.
-    const controls = enabled ? (
-      <Box>
-        <Box flexShrink={0} marginRight={1}>
-          <Button key="pane" plain dimColor onPress={() => void togglePane($)}>
-            {paneButtonLabel(isPaneOpen)}
-          </Button>
-        </Box>
-        {button}
-      </Box>
-    ) : (
-      button
-    )
-
-    // OFF, or an agent that never worked and no subagent to show: the buttons alone, as before.
-    if (!enabled || (checklist.startedAt === null && Object.keys(subagents).length === 0)) {
-      return (
-        <Box flexDirection="column">
-          <Box justifyContent="flex-end">{controls}</Box>
-          {below}
-        </Box>
-      )
-    }
-
-    const now = await $.clock.now()
-    const head = headlineOf(checklist, now)
-    // Working: the title gives way to the time; otherwise the reason gives way to the label.
-    const isTitleFirst = head.tone === 'working'
-
-    const titled = (
-      <Box>
-        <Box flexGrow={1} flexShrink={1}>
-          <Box flexShrink={isTitleFirst ? 1 : 0}>
-            <Text wrap="truncate-end" bold={!isTitleFirst} color={TONE[head.tone]}>
-              {head.label}
-            </Text>
-          </Box>
-          {head.detail === null ? null : (
-            <Box flexShrink={isTitleFirst ? 0 : 1}>
-              <Text wrap="truncate-end" dimColor>
-                {` · ${head.detail}`}
-              </Text>
-            </Box>
-          )}
-        </Box>
-        <Box flexShrink={0} marginLeft={2}>
-          {controls}
-        </Box>
-      </Box>
-    )
-
-    // No turn yet (only subagents to show): there is no title, the button alone heads the block.
-    const header = checklist.startedAt === null ? <Box justifyContent="flex-end">{controls}</Box> : titled
-
-    // Folded, the checklist and the main status are one line; the subagents keep their rows.
-    const rows = checklist.isCollapsed ? [] : rowsOf(checklist, tick)
-    // What the band may take, less the frame, the header and the checklist.
-    const view = subagentViewOf(subagents, now, e.props.maxRows - 3 - rows.length, e.props.bodyColumns)
-
-    // Folded and no subagents: one line, no frame.
-    if (checklist.isCollapsed && view === null) {
-      return (
-        <Box flexDirection="column">
-          {header}
-          {below}
-        </Box>
-      )
-    }
-
-    const { showBars, nameWidth } = layoutOf(rows, e.props.bodyColumns)
-
-    const section =
-      view === null ? null : (
-        <Box key="subagents" flexDirection="column">
-          <Box>
-            <Box flexGrow={1} flexShrink={1}>
-              <Text wrap="truncate-end" bold>
-                Subagents
-              </Text>
-            </Box>
-            <Box flexShrink={0} marginLeft={2}>
-              <Text dimColor>{`${view.active} active`}</Text>
-            </Box>
-          </Box>
-          {view.rows.map(row => {
-            const isActive = row.status === 'working' || row.status === 'needsYou'
-
-            return (
-              <Box key={`sub-${row.id}`} flexDirection="column" paddingLeft={row.depth * 2}>
-                <Box>
-                  <Box flexShrink={0} width={2}>
-                    <Text color={SUBAGENT_TONE[row.status]}>{row.mark}</Text>
-                  </Box>
-                  <Box flexGrow={1} flexShrink={1}>
-                    <Text wrap="truncate-end" bold={isActive} dimColor={!isActive}>
-                      {row.name}
-                    </Text>
-                  </Box>
-                  <Box flexShrink={0} marginLeft={2}>
-                    <Text dimColor>{row.time}</Text>
-                  </Box>
-                </Box>
-                <Box>
-                  <Box flexShrink={0} width={2} />
-                  <Box flexGrow={1} flexShrink={1}>
-                    <Text wrap="truncate-end" dimColor>
-                      {row.activity}
-                    </Text>
-                  </Box>
-                  {view.showStatus ? (
-                    <Box flexShrink={0} marginLeft={2}>
-                      <Text color={SUBAGENT_TONE[row.status]}>{row.label}</Text>
-                    </Box>
-                  ) : null}
-                </Box>
-              </Box>
-            )
-          })}
-          {view.hidden > 0 ? (
-            <Text wrap="truncate-end" dimColor>
-              {`+${view.hidden} more`}
-            </Text>
-          ) : null}
-        </Box>
-      )
-
-    const panel = (
-      <Box flexDirection="column" borderStyle="round" borderColor={BORDER_COLOR} paddingX={1}>
-        {header}
-        {rows.map((row, index) => (
-          <Box key={`row-${index}`}>
-            <Box flexShrink={0} width={2}>
-              <Text color={row.status === 'done' ? GREEN : row.status === 'active' ? ACTIVE : undefined} dimColor={row.status === 'upcoming'}>
-                {row.mark}
-              </Text>
-            </Box>
-            <Box flexShrink={0} width={nameWidth}>
-              <Text wrap="truncate-end" bold={row.status === 'active'} dimColor={row.status !== 'active'}>
-                {row.name}
-              </Text>
-            </Box>
-            {showBars ? (
-              <Box flexShrink={0} marginLeft={2}>
-                <Text color={row.status === 'done' ? GREEN : row.status === 'active' ? ACTIVE : undefined} dimColor={row.status === 'upcoming'}>
-                  {row.bar}
-                </Text>
-              </Box>
-            ) : null}
-            <Box flexShrink={0} marginLeft={2}>
-              <Text dimColor={row.status !== 'active'}>{row.label}</Text>
-            </Box>
-          </Box>
-        ))}
-        {section}
-      </Box>
-    )
-
     return (
       <Box flexDirection="column">
-        {panel}
+        <Box>
+          <Box flexGrow={1} flexShrink={1}>
+            <Text wrap="truncate-end" bold dimColor>
+              {PANE_TITLE}
+            </Text>
+          </Box>
+          {enabled ? (
+            <Box flexShrink={0} marginLeft={2} marginRight={1}>
+              <Button key="pane" plain dimColor onPress={() => void togglePane($)}>
+                {paneButtonLabel(isPaneOpen)}
+              </Button>
+            </Box>
+          ) : null}
+          <Box flexShrink={0} marginLeft={enabled ? 0 : 2}>
+            {toggle}
+          </Box>
+        </Box>
         {below}
       </Box>
     )
   })
 
-  // The detail pane, opened only by the band's button: the turn, its whole checklist, the subagents at work and the history. It only reads.
+  // The detail pane, opened only by the band's button: the turn with its phase and reason, its whole checklist, the subagents at work and the history, always the last state (it never folds). It only reads.
   on('ui.render', { component: 'Pane', requestId: PANE_ID }, async ($, e) => {
     const state = await read($, radar)
     const now = await $.clock.now()
@@ -534,9 +396,9 @@ export const register: Register = on => {
       )
     }
 
-    // The body has no frame of its own to take off: the band's four columns of border and padding are added back for `layoutOf`.
+    // The body has no frame of its own to take off: four columns are added back for `layoutOf`, which counts the border and padding of a framed block.
     const { showBars, nameWidth } = layoutOf(view.tasks, columns + 4)
-    const showStatus = columns + 4 >= 40
+    const showStatus = columns >= STATUS_MIN_COLUMNS
 
     /** A section's title, with an optional figure at the right. */
     const heading = (key: string, title: string, figure?: string) => (
@@ -598,9 +460,18 @@ export const register: Register = on => {
             </Text>
             <Box>
               <Box flexGrow={1} flexShrink={1}>
-                <Text wrap="truncate-end" color={TONE[view.now.tone]}>
-                  {view.now.label}
-                </Text>
+                <Box flexShrink={0}>
+                  <Text wrap="truncate-end" bold color={TONE[view.now.tone]}>
+                    {view.now.label}
+                  </Text>
+                </Box>
+                {view.now.reason === null ? null : (
+                  <Box flexShrink={1}>
+                    <Text wrap="truncate-end" dimColor>
+                      {` · ${view.now.reason}`}
+                    </Text>
+                  </Box>
+                )}
               </Box>
               <Box flexShrink={0} marginLeft={2}>
                 <Text dimColor>{view.now.time}</Text>

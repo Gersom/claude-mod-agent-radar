@@ -38,10 +38,9 @@ export type ClaudeRadarState = {
     stuckReason: string | null
     startedAt: number | null
     finishedAt: number | null
-    isCollapsed: boolean
   }
   subagents: Record<string, SubagentState>
-  /** The subagents that finished, the most recent first, at most 50, one entry per id; the band ignores it, the detail pane lists it. */
+  /** The subagents that finished, the most recent first, at most 50, one entry per id; the detail pane lists it. */
   history: SubagentState[]
   tick: number
 }

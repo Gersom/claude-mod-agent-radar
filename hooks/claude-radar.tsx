@@ -10,8 +10,7 @@ export const initialState = (): ClaudeRadarState => ({
     needsYouReason: null,
     stuckReason: null,
     startedAt: null,
-    finishedAt: null,
-    isCollapsed: true
+    finishedAt: null
   },
   subagents: {},
   history: [],
@@ -26,9 +25,6 @@ export const buttonLabel = (enabled: boolean) => `[ ● Claude Radar: ${enabled 
 
 /** How often the one timer ticks, in milliseconds: the animation's step. */
 export const TICK_MS = 250
-
-/** How long the finished panel stays open before it folds into one line, in milliseconds. */
-export const COLLAPSE_MS = 5000
 
 /** The segments of a progress bar. */
 export const BAR_WIDTH = 10
@@ -132,8 +128,7 @@ export const startTurn = (state: ClaudeRadarState, text: string, now: number): C
     needsYouReason: null,
     stuckReason: null,
     startedAt: now,
-    finishedAt: null,
-    isCollapsed: false
+    finishedAt: null
   })
 
 /** The end of a turn: answered is done, interrupted is stopped, an error or a refusal is stuck. Tasks still active stay as they were. */
@@ -220,27 +215,18 @@ export const askUser = (state: ClaudeRadarState): ClaudeRadarState =>
 export const resumeWork = (state: ClaudeRadarState): ClaudeRadarState =>
   state.checklist.phase === 'needsYou' ? patchChecklist(state, { phase: 'working', needsYouReason: null }) : state
 
-/** Folds a finished panel into one line once `COLLAPSE_MS` have passed since it ended. */
-export const collapseIfDue = (state: ClaudeRadarState, now: number): ClaudeRadarState => {
-  const { finishedAt, isCollapsed } = state.checklist
-
-  return finishedAt !== null && !isCollapsed && now - finishedAt >= COLLAPSE_MS ? patchChecklist(state, { isCollapsed: true }) : state
-}
-
-/** One step of the timer: the animation moves on, a panel that has been finished long enough folds and finished subagents are retired. */
+/** One step of the timer: the animation moves on and finished subagents are retired. */
 export const advance = (state: ClaudeRadarState, now: number): ClaudeRadarState => {
-  const next = pruneFinished(collapseIfDue(state, now), now)
+  const next = pruneFinished(state, now)
 
   return { ...next, tick: next.tick + 1 }
 }
 
-/** Whether the timer has something to move: a turn at work or waiting, a finished panel not yet folded, or any subagent still listed (running, or finished and not yet retired). */
+/** Whether the timer has something to move while the pane is open: a turn at work or waiting, or any subagent still listed (running, or finished and not yet retired). */
 export const isLive = (state: ClaudeRadarState) => {
-  const { phase, finishedAt, isCollapsed } = state.checklist
+  const { phase } = state.checklist
 
-  return (
-    phase === 'working' || phase === 'needsYou' || (finishedAt !== null && !isCollapsed) || Object.keys(state.subagents).length > 0
-  )
+  return phase === 'working' || phase === 'needsYou' || Object.keys(state.subagents).length > 0
 }
 
 /** Whether the tool rows (calls, results, groups, progress) are hidden now: the radar is ON and work goes on (the main turn working, or any subagent at work), and nobody waits for the person: a call that asks permission stays in view. */
@@ -252,33 +238,6 @@ export const hidesTools = (state: ClaudeRadarState) => {
   if (phase === 'needsYou' || Object.values(state.subagents).some(agent => agent.status === 'needsYou')) return false
 
   return phase === 'working' || activeCount(state.subagents) > 0
-}
-
-/** How the header reads: what it says, the figure that goes with it and the tone that colours the first. */
-export type Headline = {
-  label: string
-  detail: string | null
-  tone: AgentPhase
-}
-
-/** The header's text for the phase: the title and the time while working (frozen when it ends), the reason when stuck or waiting. */
-export const headlineOf = (checklist: Checklist, now: number): Headline => {
-  const { phase, title, startedAt, finishedAt, needsYouReason, stuckReason } = checklist
-  const since = startedAt ?? now
-  const took = elapsed((finishedAt ?? now) - since)
-
-  switch (phase) {
-    case 'needsYou':
-      return { label: 'Needs you', detail: needsYouReason, tone: phase }
-    case 'stuck':
-      return { label: 'Stuck', detail: stuckReason, tone: phase }
-    case 'stopped':
-      return { label: 'Stopped', detail: null, tone: phase }
-    case 'done':
-      return { label: 'All done', detail: took, tone: phase }
-    default:
-      return { label: title || DEFAULT_TITLE, detail: took, tone: phase }
-  }
 }
 
 /** A line of the checklist, as text: the mark, the name, the bar and the label of its status. */
@@ -327,8 +286,8 @@ export const RETIRE_MS = 5000
 /** The most finished subagents the history keeps. */
 export const HISTORY_MAX = 50
 
-/** Below this many columns the subagents drop their status column. */
-export const STATUS_MIN_COLUMNS = 40
+/** Below this many columns of the pane body the subagents drop their status column. */
+export const STATUS_MIN_COLUMNS = 36
 
 type Subagents = ClaudeRadarState['subagents']
 
@@ -438,7 +397,7 @@ export const finishSubagent = (state: ClaudeRadarState, id: string, reason: Turn
 export const recordHistory = (history: readonly SubagentState[], agent: SubagentState): SubagentState[] =>
   [{ ...agent }, ...history.filter(entry => entry.id !== agent.id)].slice(0, HISTORY_MAX)
 
-/** Takes out the subagents that finished `RETIRE_MS` ago or more, making sure each is in the history; the same state when none is due. The history is the pane's: the band never reads it. */
+/** Takes out the subagents that finished `RETIRE_MS` ago or more, making sure each is in the history; the same state when none is due. The history is the pane's; nothing else reads it. */
 export const pruneFinished = (state: ClaudeRadarState, now: number): ClaudeRadarState => {
   const entries = Object.entries(state.subagents)
   const isDue = (agent: SubagentState) => agent.finishedAt !== null && now - agent.finishedAt >= RETIRE_MS
@@ -457,33 +416,8 @@ export const pruneFinished = (state: ClaudeRadarState, now: number): ClaudeRadar
 /** How many subagents are at work (running or waiting for the person). */
 export const activeCount = (subagents: Subagents) => Object.values(subagents).filter(agent => isActive(agent.status)).length
 
-/** The two lines of a subagent, as text: the mark, the name and the time, then the activity and the status. */
-export type SubagentRow = {
-  id: string
-  mark: '●' | '✓' | '✗' | '■'
-  name: string
-  time: string
-  activity: string
-  label: string
-  status: SubagentStatus
-  /** 0 for a flat list or a root; one more per known ancestor. */
-  depth: number
-}
-
 const SUBAGENT_MARKS = { working: '●', needsYou: '●', done: '✓', failed: '✗', stopped: '■' } as const
 const SUBAGENT_LABELS = { working: 'Working', needsYou: 'Needs you', done: 'Done', failed: 'Failed', stopped: 'Stopped' } as const
-
-/** The row of a subagent: its own time (frozen once it ended) and, as activity, what its tools say, else its task, else `Working`. */
-export const subagentRowOf = (agent: SubagentState, now: number, depth = 0): SubagentRow => ({
-  id: agent.id,
-  mark: SUBAGENT_MARKS[agent.status],
-  name: agent.name,
-  time: elapsed((agent.finishedAt ?? now) - agent.startedAt),
-  activity: (agent.activity ?? (agent.task === null ? '' : clean(agent.task))) || 'Working',
-  label: SUBAGENT_LABELS[agent.status],
-  status: agent.status,
-  depth
-})
 
 /** The subagents in start order, each with its depth. A hierarchy shows only where `parentId` names an agent still listed: its children follow it, one level in; otherwise the list is flat. */
 const orderedSubagents = (subagents: Subagents): { agent: SubagentState; depth: number }[] => {
@@ -519,34 +453,6 @@ const orderedSubagents = (subagents: Subagents): { agent: SubagentState; depth: 
   return ordered
 }
 
-/** The rows in start order, hierarchy included (see `orderedSubagents`). */
-export const subagentRowsOf = (subagents: Subagents, now: number): SubagentRow[] =>
-  orderedSubagents(subagents).map(({ agent, depth }) => subagentRowOf(agent, now, depth))
-
-/** What the subagents section draws in `lines` rows (its header included): the rows that fit, active ones first and in their order, how many were left out, and whether the status column fits. `null` when there are no subagents. */
-export const subagentViewOf = (subagents: Subagents, now: number, lines: number, bodyColumns: number) => {
-  const all = subagentRowsOf(subagents, now)
-
-  if (all.length === 0) return null
-
-  // Two rows each; when some are left out, one more row says how many.
-  const room = Number.isFinite(lines) ? Math.max(0, lines) : 0
-  const slots = Math.min(all.length, Math.max(0, Math.floor((room - (room - 1 >= all.length * 2 ? 1 : 2)) / 2)))
-  const keep = new Set(
-    all
-      .map((row, index) => index)
-      .sort((a, b) => Number(!isActive(all[a]!.status)) - Number(!isActive(all[b]!.status)) || a - b)
-      .slice(0, slots)
-  )
-
-  return {
-    active: activeCount(subagents),
-    rows: all.filter((_, index) => keep.has(index)),
-    hidden: all.length - slots,
-    showStatus: bodyColumns >= STATUS_MIN_COLUMNS
-  }
-}
-
 /** The id of the detail pane (1-64 of letters, digits, `_`, `-`). */
 export const PANE_ID = 'agent-radar'
 
@@ -562,10 +468,12 @@ export const paneButtonLabel = (isOpen: boolean) => `[ ◧ ${isOpen ? 'Close' : 
 
 const PHASE_LABELS = { working: 'Working', needsYou: 'Needs you', stuck: 'Stuck', stopped: 'Stopped', done: 'All done' } as const
 
-/** The pane's `Now` block: the turn's title, its phase and its time (frozen once it ended). */
+/** The pane's `Now` block: the turn's title, its phase with the reason, and its time (frozen once it ended). */
 export type PaneNow = {
   title: string
   label: string
+  /** Why it waits or is stuck (`Waiting for your permission`, ...); null when there is no reason to give. */
+  reason: string | null
   time: string
   tone: AgentPhase
 }
@@ -573,7 +481,7 @@ export type PaneNow = {
 /** A subagent in the pane: live or finished, with the whole task (one line, tidied) and the activity. */
 export type PaneAgent = {
   id: string
-  mark: SubagentRow['mark']
+  mark: '●' | '✓' | '✗' | '■'
   status: SubagentStatus
   name: string
   time: string
@@ -605,12 +513,13 @@ export const paneOf = (state: ClaudeRadarState, now: number, tick: number) => {
     ? {
         title: checklist.title || DEFAULT_TITLE,
         label: PHASE_LABELS[checklist.phase],
+        reason: checklist.phase === 'needsYou' ? checklist.needsYouReason : checklist.phase === 'stuck' ? checklist.stuckReason : null,
         time: elapsed((checklist.finishedAt ?? now) - checklist.startedAt!),
         tone: checklist.phase
       }
     : null
 
-  // A finished one waits in the band for a moment but is already in the history: the live list is the ones at work.
+  // A finished one stays listed for a moment but is already in the history: the live list is the ones at work.
   const live = orderedSubagents(state.subagents)
     .filter(({ agent }) => isActive(agent.status))
     .map(({ agent, depth }) => paneAgentOf(agent, now, depth))
