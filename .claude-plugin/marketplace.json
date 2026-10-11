@@ -1,0 +1,12 @@
+{
+  "name": "agent-radar",
+  "owner": { "name": "Gersom" },
+  "metadata": { "description": "Marketplace de un solo plugin: agent-radar." },
+  "plugins": [
+    {
+      "name": "agent-radar",
+      "source": "./",
+      "description": "Monitor visual y pasivo del agente principal y sus subagentes sobre el prompt."
+    }
+  ]
+}
