@@ -17,11 +17,12 @@ Con muchas llamadas a herramientas y varios subagentes en paralelo, la conversac
 Una sola línea, sin borde: el nombre a la izquierda y los botones a la derecha. Nada más: ni título, ni tiempo, ni estados, ni listas.
 
 ```
-Claude Radar                                    [ ◧ Detail ] [ ● Claude Radar: ON ]
+Claude Radar                         [ ◧ Detail ] [ ● Claude Radar: ON ] [ ✕ Hide ]
 ```
 
 - El botón `[ ◧ Detail ]` abre el panel de detalle (y pasa a `[ ◧ Close ]` mientras está abierto). Solo se ve con el radar en `ON`.
-- Con el radar en `OFF`: `Claude Radar` y `[ ● Claude Radar: OFF ]`.
+- Con el radar en `OFF`: `Claude Radar`, `[ ● Claude Radar: OFF ]` y `[ ✕ Hide ]`.
+- El botón `[ ✕ Hide ]` quita la banda de la barra del prompt (no apaga el radar: el panel y el ocultar filas técnicas siguen según ON/OFF). Para devolverla: `/agent-radar show`. La elección se guarda en `$.store` (clave `bandHidden`) y sobrevive a las sesiones.
 - Si falta ancho se corta el nombre (`…`) antes que los botones: los botones nunca se encogen.
 - Cede ante una encuesta (`hasSurvey`) y respeta lo que dibujen debajo otros hooks de la banda.
 
@@ -60,14 +61,16 @@ Se cierra con el mismo botón (`[ ◧ Close ]`), con el comando `/agent-radar` o
 
 ## Comando `/agent-radar`
 
-Abre y cierra el mismo panel de detalle, para quien prefiere teclear. Es una petición de la persona, así que el panel se coloca con cualquier ancho (como con el botón).
+Abre y cierra el mismo panel de detalle, para quien prefiere teclear, y muestra u oculta la banda (`hide` / `show`). Es una petición de la persona, así que el panel se coloca con cualquier ancho (como con el botón).
 
 | Comando | Efecto | Respuesta |
 |---|---|---|
 | `/agent-radar` | alterna: abre si está cerrado, cierra si está abierto | `Detail pane opened` / `Detail pane closed` |
 | `/agent-radar open` | solo abre; con el panel ya abierto no hace nada | `Detail pane opened` |
 | `/agent-radar close` | solo cierra; con el panel ya cerrado no hace nada | `Detail pane closed` |
-| `/agent-radar <otra cosa>` | no cambia nada | `Usage: /agent-radar [open\|close]. With no argument, it toggles the pane.` |
+| `/agent-radar hide` | quita la banda de la barra del prompt (con el radar en `ON` u `OFF`) | `Band hidden. Bring it back with /agent-radar show` |
+| `/agent-radar show` | devuelve la banda | `Band shown` |
+| `/agent-radar <otra cosa>` | no cambia nada | `Usage: /agent-radar [open|close|hide|show]. With no argument, it toggles the pane.` |
 
 - Con el radar en `OFF` responde `Claude Radar is OFF. Turn it on with its button.` y no abre nada.
 - Si la superficie no coloca paneles, la respuesta y un aviso dicen el motivo (`The detail pane is not available here: <motivo>`) y no queda ningún panel esperando.
@@ -90,7 +93,7 @@ La interfaz habla español o inglés, con diccionarios fijos en `hooks/i18n.ts`:
 Con `settings.language` en español, la banda y el panel se ven así:
 
 ```
-Claude Radar                                    [ ◧ Detalle ] [ ● Claude Radar: ON ]
+Claude Radar                         [ ◧ Detalle ] [ ● Claude Radar: ON ] [ ✕ Ocultar ]
 ```
 
 ```text
@@ -197,8 +200,8 @@ El mod solo observa eventos y dibuja:
 - **Tipo:** hook (plugin de Claude Code).
 - **Eventos:** `session.start` (registra el comando), `command.run` de `/agent-radar`, `session.end` (borra el estado de la sesión), `ui.close` del panel de detalle, `turn.start`, `turn.complete`, `tool.call`, `tool.check` (para `Needs you`: solo cuenta una pregunta de origen `engine`), `agent.spawn`.
 - **Dibujo:** `ui.render` sobre `AbovePrompt` (la banda), sobre `Pane` con `requestId` `agent-radar` (el panel de detalle) y sobre las cuatro filas técnicas. El panel se abre y cierra con `$.ui.open` / `$.ui.close`.
-- **Estado:** `$.state` con cuatro claves: `claudeRadarState` (todo el estado, el historial incluido), `claudeRadarHidesTools` (si las filas están ocultas; aparte para que la transcripción se redibuje al cambiar de fase y no en cada tic), `claudeRadarPaneOpen` (si el panel está abierto, para el botón y el temporizador) y `claudeRadarLang` (el idioma, o `null` hasta que se lee).
-- **Almacén, ajustes y reloj:** `$.store` (clave `enabled`), `$.settings.read()` (clave `language`), `$.clock.now()`, `$.clock.every(250, …)` y `$.clock.after(5000, …)`.
+- **Estado:** `$.state` con cinco claves: `claudeRadarState` (todo el estado, el historial incluido), `claudeRadarHidesTools` (si las filas están ocultas; aparte para que la transcripción se redibuje al cambiar de fase y no en cada tic), `claudeRadarPaneOpen` (si el panel está abierto, para el botón y el temporizador), `claudeRadarBandHidden` (si la banda está quitada) y `claudeRadarLang` (el idioma, o `null` hasta que se lee).
+- **Almacén, ajustes y reloj:** `$.store` (claves `enabled` y `bandHidden`), `$.settings.read()` (clave `language`), `$.clock.now()`, `$.clock.every(250, …)` y `$.clock.after(5000, …)`.
 
 ## Instalación
 

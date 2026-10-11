@@ -64,6 +64,8 @@ declare module 'claude-code' {
       claudeRadarHidesTools: boolean
       /** Whether the detail pane is open: set when the button opens it, cleared when it closes by any hand. */
       claudeRadarPaneOpen: boolean
+      /** Whether the band is taken off the prompt (the radar itself keeps working); saved in the store between sessions. */
+      claudeRadarBandHidden: boolean
       /** The radar's language, settled from settings.language the first time; null until then. */
       claudeRadarLang: Lang | null
     }

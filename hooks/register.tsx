@@ -19,6 +19,7 @@ import {
   didRun,
   finishSubagent,
   finishTurn,
+  hideButtonLabel,
   hidesTools,
   initialState,
   isLive,
@@ -40,6 +41,9 @@ import { NAME, detectLang, textsOf } from './i18n'
 
 /** The key of `$.store` that keeps the ON/OFF choice between sessions. */
 const STORE_KEY = 'enabled'
+
+/** The key of `$.store` that keeps whether the band is hidden between sessions. */
+const BAND_KEY = 'bandHidden'
 
 /** The colour of the pane's phase label by phase; `undefined` leaves the default. */
 const TONE = {
@@ -70,6 +74,9 @@ const hideTools = atom({ plugin: 'agent-radar', key: 'claudeRadarHidesTools' } a
 
 /** Whether the detail pane is open: set when the button opens it, cleared when it closes, whoever closes it. */
 const paneOpen = atom({ plugin: 'agent-radar', key: 'claudeRadarPaneOpen' } as const, false)
+
+/** Whether the band is taken off the prompt: only the drawing of the band goes, the pane and the hidden tool rows follow ON/OFF as ever. */
+const bandHidden = atom({ plugin: 'agent-radar', key: 'claudeRadarBandHidden' } as const, false)
 
 /** The radar's language, settled from settings.language the first time (and again in a new session); `null` until then. */
 const langMode = atom({ plugin: 'agent-radar', key: 'claudeRadarLang' } as const, null as Lang | null)
@@ -109,6 +116,17 @@ const textsFor = async ($: EngineInterface) => textsOf((await read($, langMode))
 let paneIsOpen = false
 let radarIsOn = true
 
+/** Sets the band's hidden flag, atom and saved choice together; a store that cannot be written leaves the choice for this session only. */
+const setBandHidden = async ($: EngineInterface, value: boolean) => {
+  await update($, bandHidden, () => value)
+
+  try {
+    await $.store.set(BAND_KEY, value)
+  } catch {
+    // Not saved: the choice still holds for this session.
+  }
+}
+
 /** Sets the pane's flag, atom and mirror together. */
 const setPaneOpen = async ($: EngineInterface, value: boolean) => {
   paneIsOpen = value
@@ -134,12 +152,16 @@ let restoring: Promise<void> | null = null
 const ensureEnabled = ($: EngineInterface) => {
   restoring ??= (async () => {
     let saved: unknown
+    let savedBand: unknown
 
     try {
       saved = await $.store.get(STORE_KEY)
+      savedBand = await $.store.get(BAND_KEY)
     } catch {
-      // No store to read: the default, ON.
+      // No store to read: the defaults, ON and the band shown.
     }
+
+    if (savedBand === true) await update($, bandHidden, () => true)
 
     if (typeof saved === 'boolean') {
       const enabled = saved
@@ -238,6 +260,13 @@ const setEnabled = async ($: EngineInterface, enabled: boolean) => {
   $.ui.toast((await textsFor($)).toggle(enabled))
 }
 
+/** The hide button: takes the band off the prompt, saves it and says how to bring it back. The radar keeps working. */
+const hideBand = async ($: EngineInterface) => {
+  await setBandHidden($, true)
+  await ensureLang($)
+  $.ui.toast((await textsFor($)).bandHidden)
+}
+
 /** Claude Radar: a passive monitor of the main agent and its subagents. It only watches the events go by and draws; nothing it sees is changed. */
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
@@ -251,7 +280,7 @@ export const register: Register = on => {
     await $.command.register({
       name: 'agent-radar',
       description: (await textsFor($)).commandDescription,
-      argumentHint: '[open|close]'
+      argumentHint: '[open|close|hide|show]'
     })
 
     return next(e)
@@ -281,9 +310,9 @@ export const register: Register = on => {
   // request places the pane at any width. The decision uses the mirrors, so `$.ui.open` is the first `await` of an opening.
   on('command.run', { command: 'agent-radar' }, async ($, e) => {
     const arg = e.args.trim().toLowerCase()
-    const isKnown = arg === '' || arg === 'open' || arg === 'close'
+    const isKnown = arg === '' || arg === 'open' || arg === 'close' || arg === 'hide' || arg === 'show'
 
-    if (isKnown && radarIsOn && !paneIsOpen && arg !== 'close') {
+    if (isKnown && radarIsOn && !paneIsOpen && (arg === '' || arg === 'open')) {
       const reason = await openPane($)
       const t = await textsFor($)
 
@@ -299,6 +328,14 @@ export const register: Register = on => {
     const t = await textsFor($)
 
     if (!isKnown) return { text: t.commandUsage }
+
+    // The band is the only thing these two touch: they work whether the radar is ON or OFF.
+    if (arg === 'hide' || arg === 'show') {
+      await setBandHidden($, arg === 'hide')
+
+      return { text: arg === 'hide' ? t.bandHidden : t.bandShown }
+    }
+
     if (!radarIsOn) return { text: t.radarOff }
 
     // Open already (`open`, or the toggle's turn to close), or closed already (`close`).
@@ -446,7 +483,7 @@ export const register: Register = on => {
     // Other hooks' bands stay; a survey keeps the band to itself.
     const below = await next(e)
 
-    if (e.props.hasSurvey) return below
+    if (e.props.hasSurvey || (await read($, bandHidden))) return below
 
     const { claudeRadarEnabled: enabled } = await read($, radar)
     const isPaneOpen = await read($, paneOpen)
@@ -477,6 +514,11 @@ export const register: Register = on => {
           ) : null}
           <Box flexShrink={0} marginLeft={enabled ? 0 : 2}>
             {toggle}
+          </Box>
+          <Box flexShrink={0} marginLeft={1}>
+            <Button key="hide" plain dimColor onPress={() => void hideBand($)}>
+              {hideButtonLabel(t)}
+            </Button>
           </Box>
         </Box>
         {below}

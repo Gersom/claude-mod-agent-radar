@@ -458,6 +458,8 @@ export const PANE_ROWS = 14
 export const PANE_COLUMNS = 60
 
 /** The label of the band's detail button. */
+export const hideButtonLabel = (t: Texts) => `[ ✕ ${t.hide} ]`
+
 export const paneButtonLabel = (isOpen: boolean, t: Texts) => `[ ◧ ${isOpen ? t.close : t.detail} ]`
 
 /** The pane's `Now` block: the turn's title, its phase with the reason, and its time (frozen once it ended). */

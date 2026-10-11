@@ -97,10 +97,10 @@ test('the English texts are the ones the radar always had', async () => {
 })
 
 test('the command has a description, answers and a usage in each language, naming both arguments', async () => {
-  expect(en.commandDescription).toBe('Open or close the Claude Radar detail pane.')
-  expect(es.commandDescription).toBe('Abre o cierra el panel de detalle de Claude Radar.')
-  expect(en.commandUsage).toBe('Usage: /agent-radar [open|close]. With no argument, it toggles the pane.')
-  expect(es.commandUsage).toBe('Uso: /agent-radar [open|close]. Sin argumento, alterna el panel.')
+  expect(en.commandDescription).toBe('Open or close the Claude Radar detail pane, or show or hide its band.')
+  expect(es.commandDescription).toBe('Abre o cierra el panel de detalle de Claude Radar, o muestra u oculta su banda.')
+  expect(en.commandUsage).toBe('Usage: /agent-radar [open|close|hide|show]. With no argument, it toggles the pane.')
+  expect(es.commandUsage).toBe('Uso: /agent-radar [open|close|hide|show]. Sin argumento, alterna el panel.')
   expect([en.paneOpened, en.paneClosed]).toEqual(['Detail pane opened', 'Detail pane closed'])
   expect([es.paneOpened, es.paneClosed]).toEqual(['Panel de detalle abierto', 'Panel de detalle cerrado'])
   expect(en.radarOff).toBe('Claude Radar is OFF. Turn it on with its button.')
