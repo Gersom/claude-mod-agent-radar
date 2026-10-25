@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { ClaudeRadarState, Lang } from '../types'
+import type { ClaudeRadarState, Lang, ModelInfo } from '../types'
 
 import {
   PANE_COLUMNS,
@@ -30,6 +30,7 @@ import {
   resetSession,
   resumeWork,
   spawnSubagent,
+  stepModel,
   startTurn,
   taskIdOf,
   updateTask,
@@ -144,6 +145,10 @@ const change = async ($: EngineInterface, fn: (state: ClaudeRadarState) => Claud
 
   return state
 }
+
+/** The model and effort of requests of a subagent seen before its spawn was answered, by `agentId`; at most `EARLY_MAX`, emptied when it fills or the session ends. */
+const earlySteps = new Map<string, ModelInfo>()
+const EARLY_MAX = 50
 
 /** The one restore of the saved choice per load of the module (a reload starts it over); shared, so no draw reads the flag before it ends. */
 let restoring: Promise<void> | null = null
@@ -288,6 +293,7 @@ export const register: Register = on => {
 
   on('session.end', async ($, e, next) => {
     stop()
+    earlySteps.clear()
     // A new session starts clean: what was followed, the history included, goes; the ON/OFF choice stays.
     await change($, state => resetSession(state))
     // The next session reads the language again.
@@ -363,13 +369,36 @@ export const register: Register = on => {
     if (id !== undefined) {
       const time = await $.clock.now()
 
-      await change($, state =>
-        spawnSubagent(state, { id, name: e.subagentType, task: e.description, parentId: e.parentAgentId }, time)
-      )
+      const model = 'model' in result ? result.model : undefined
+      const early = earlySteps.get(id)
+
+      earlySteps.delete(id)
+      await change($, state => {
+        const spawned = spawnSubagent(state, { id, name: e.subagentType, task: e.description, parentId: e.parentAgentId, model }, time)
+
+        // A request that came before the spawn was answered is applied now.
+        return early === undefined ? spawned : stepModel(spawned, id, early)
+      })
       await start($)
     }
 
     return result
+  })
+
+  // Each model request names the model and the effort it runs with: the main agent's, or a subagent's (`agentId`). Observe only.
+  on('turn.step', async function* ($, e, next) {
+    const info = { model: e.model, effort: e.effort === undefined ? null : String(e.effort) }
+    const state = await read($, radar)
+
+    if (e.agentId !== undefined && !Object.prototype.hasOwnProperty.call(state.subagents, e.agentId)) {
+      // Not listed yet (its spawn is still being answered, or it is not followed): kept for the spawn, a few at most.
+      if (earlySteps.size >= EARLY_MAX) earlySteps.clear()
+      earlySteps.set(e.agentId, info)
+    } else {
+      await change($, previous => stepModel(previous, e.agentId, info))
+    }
+
+    return yield* next(e)
   })
 
   on('turn.complete', async ($, e, next) => {
@@ -572,11 +601,19 @@ export const register: Register = on => {
         <Box flexShrink={0} width={2}>
           <Text color={SUBAGENT_TONE[agent.status]}>{agent.mark}</Text>
         </Box>
-        <Box flexGrow={1} flexShrink={1}>
+        <Box flexGrow={agent.detail === null ? 1 : 0} flexShrink={1}>
           <Text wrap="truncate-end" bold={agent.status === 'working' || agent.status === 'needsYou'}>
             {agent.name}
           </Text>
         </Box>
+        {agent.detail === null ? null : (
+          <Box flexShrink={1} marginLeft={1}>
+            <Text wrap="truncate-end" dimColor>
+              {`· ${agent.detail}`}
+            </Text>
+          </Box>
+        )}
+        <Box flexGrow={1} />
         <Box flexShrink={0} marginLeft={2}>
           <Text dimColor>{agent.time}</Text>
         </Box>
@@ -619,6 +656,13 @@ export const register: Register = on => {
                   <Box flexShrink={1}>
                     <Text wrap="truncate-end" dimColor>
                       {` · ${view.now.reason}`}
+                    </Text>
+                  </Box>
+                )}
+                {view.now.detail === null ? null : (
+                  <Box flexShrink={1}>
+                    <Text wrap="truncate-end" dimColor>
+                      {` · ${view.now.detail}`}
                     </Text>
                   </Box>
                 )}

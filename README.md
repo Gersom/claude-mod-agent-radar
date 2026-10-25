@@ -33,13 +33,13 @@ Con el radar en `ON` y Claude trabajando (en inglés, el idioma por defecto; ver
 ```text
 Now
 Build my landing page
-Working                                  2m 35s
+Working · opus-4-5 · high              2m 35s
 ✓ Analyze project structure  ██████████  Done
 ▶ Implement authentication   ███░░░░░░░  Working
 ○ Run final tests            ░░░░░░░░░░  Next
 
 Subagents                              2 active
-● frontend-developer                     1m 20s
+● frontend-developer · haiku · low      1m 20s
   Building the login components
   Reading project files                 Working
   ● backend-developer                       45s
@@ -105,7 +105,7 @@ Trabajando                               2m 35s
 ○ Run final tests            ░░░░░░░░░░  Siguiente
 
 Subagentes                             2 activos
-● frontend-developer                     1m 20s
+● frontend-developer · haiku · low      1m 20s
   Building the login components
   Leyendo archivos del proyecto         Trabajando
 
@@ -118,7 +118,7 @@ Historial                                     1
 
 Título `Claude Radar`; sin límite de filas (el motor lo desplaza); todo se trunca con `…` al ancho del panel, sin barras por debajo de 36 columnas. Siempre muestra el último estado: no se pliega ni se vacía al terminar el turno.
 
-- **Now:** el título del turno (del prompt, sin rutas ni código, de 40 caracteres como máximo y cortado por palabras), su fase y su tiempo, y el checklist completo.
+- **Now:** el título del turno (del prompt, sin rutas ni código, de 40 caracteres como máximo y cortado por palabras), su fase y su tiempo, , el modelo y el esfuerzo del agente principal (`opus-4-5 · high`) y el checklist completo.
 - **Subagents:** los que están trabajando o esperándote (ver abajo).
 - **History:** los subagentes terminados, el más reciente primero. Vacío: `No finished subagents yet`. Sin nada que mostrar: `Nothing running yet`.
 
@@ -140,6 +140,7 @@ Sale solo de lo que Claude ya crea por su cuenta: `TodoWrite`, `TaskCreate` y `T
 
 - **Alta:** el hook `agent.spawn` guarda cada ejecución con su `agentId` y devuelve el resultado del motor tal cual.
 - **Nombre real:** el `subagentType` (`frontend-developer`, `Explore`, un agente de un plugin…), nunca una etiqueta genérica; solo se trunca visualmente.
+- **Modelo y esfuerzo:** junto al nombre, atenuados (`Explore · haiku · low`). Salen de `turn.step` (cada petición al modelo, del agente principal o de un subagente por su `agentId`); antes de la primera petición de un subagente se muestra el modelo que dio su spawn. El id se acorta (`claude-opus-4-5-20251101` es `opus-4-5`; un alias como `haiku` queda igual). Si el modelo no admite esfuerzo, solo se ve el modelo; si aún no se sabe nada, nada.
 - **Instancias independientes:** dos ejecuciones del mismo agente son dos entradas, con su tiempo y su estado propios.
 - **Tarea y actividad:** la tarea delegada completa en una línea (sin rutas ni código) y, debajo, la actividad actual. La actividad sale de los `tool.call` con el `agentId` del subagente, descrita con palabras locales y sin rutas, comandos ni código:
 
@@ -198,7 +199,7 @@ El mod solo observa eventos y dibuja:
 ## Tipo y fuente de datos
 
 - **Tipo:** hook (plugin de Claude Code).
-- **Eventos:** `session.start` (registra el comando), `command.run` de `/agent-radar`, `session.end` (borra el estado de la sesión), `ui.close` del panel de detalle, `turn.start`, `turn.complete`, `tool.call`, `tool.check` (para `Needs you`: solo cuenta una pregunta de origen `engine`), `agent.spawn`.
+- **Eventos:** `session.start` (registra el comando), `command.run` de `/agent-radar`, `session.end` (borra el estado de la sesión), `ui.close` del panel de detalle, `turn.start`, `turn.step` (solo observa el modelo y el esfuerzo), `turn.complete`, `tool.call`, `tool.check` (para `Needs you`: solo cuenta una pregunta de origen `engine`), `agent.spawn`.
 - **Dibujo:** `ui.render` sobre `AbovePrompt` (la banda), sobre `Pane` con `requestId` `agent-radar` (el panel de detalle) y sobre las cuatro filas técnicas. El panel se abre y cierra con `$.ui.open` / `$.ui.close`.
 - **Estado:** `$.state` con cinco claves: `claudeRadarState` (todo el estado, el historial incluido), `claudeRadarHidesTools` (si las filas están ocultas; aparte para que la transcripción se redibuje al cambiar de fase y no en cada tic), `claudeRadarPaneOpen` (si el panel está abierto, para el botón y el temporizador), `claudeRadarBandHidden` (si la banda está quitada) y `claudeRadarLang` (el idioma, o `null` hasta que se lee).
 - **Almacén, ajustes y reloj:** `$.store` (claves `enabled` y `bandHidden`), `$.settings.read()` (clave `language`), `$.clock.now()`, `$.clock.every(250, …)` y `$.clock.after(5000, …)`.

@@ -11,6 +11,12 @@ export type AgentPhase = 'working' | 'needsYou' | 'stuck' | 'stopped' | 'done'
 
 export type SubagentStatus = 'working' | 'needsYou' | 'done' | 'failed' | 'stopped'
 
+/** The model a request names and how hard it asks it to think; `effort` is null for a model that takes none. */
+export type ModelInfo = {
+  model: string
+  effort: string | null
+}
+
 export type SubagentState = {
   /** The `agentId` the engine gives the run; two runs of the same agent have different ids. */
   id: string
@@ -24,6 +30,8 @@ export type SubagentState = {
   status: SubagentStatus
   /** The id of the agent whose loop spawned it (`parentAgentId`); absent when the main loop did, so no hierarchy is drawn without it. */
   parentId?: string
+  /** Its model and effort, from the spawn and then from each of its model requests (`turn.step`); absent until one is seen. */
+  modelInfo?: ModelInfo
   startedAt: number
   finishedAt: number | null
 }
@@ -50,6 +58,8 @@ export type ClaudeRadarState = {
     startedAt: number | null
     finishedAt: number | null
   }
+  /** The main agent's model and effort, from its model requests; absent until one is seen. */
+  leaderModel?: ModelInfo
   subagents: Record<string, SubagentState>
   /** The subagents that finished, the most recent first, at most 50, one entry per id; the detail pane lists it. */
   history: SubagentState[]

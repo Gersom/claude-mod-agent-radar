@@ -1,4 +1,4 @@
-import type { ActivityCode, AgentPhase, ChecklistTask, ClaudeRadarState, ReasonCode, SubagentState, SubagentStatus } from '../types'
+import type { ActivityCode, AgentPhase, ChecklistTask, ClaudeRadarState, ModelInfo, ReasonCode, SubagentState, SubagentStatus } from '../types'
 
 import type { Texts } from './i18n'
 
@@ -296,6 +296,8 @@ export type SubagentSpawn = {
   task?: string | null
   parentId?: string
   sessionId?: string
+  /** The model the spawn started it on, when the engine said. */
+  model?: string
 }
 
 /** Whether the radar follows this agent; ids are keys, so inherited names do not count. */
@@ -326,8 +328,31 @@ export const spawnSubagent = (state: ClaudeRadarState, spawn: SubagentSpawn, now
   }
 
   if (spawn.parentId) agent.parentId = spawn.parentId
+  if (spawn.model) agent.modelInfo = { model: spawn.model, effort: null }
 
   return { ...state, subagents: { ...state.subagents, [spawn.id]: agent } }
+}
+
+/** A model id in short form: `claude-opus-4-5-20251101` is `opus-4-5`; an alias (`haiku`) stays as it is. */
+export const shortModel = (id: string) =>
+  id
+    .replace(/^.*claude-/i, '')
+    .replace(/-[0-9]{8}(?![0-9])/, '')
+    .replace(/\[[^\]]*\]$/, '')
+    .trim() || id
+
+/** `opus-4-5 · high`: the model, short, and the effort when the model has one; null when nothing is known. */
+export const detailOf = (info: ModelInfo | undefined): string | null =>
+  info === undefined ? null : [shortModel(info.model), info.effort].filter(part => part !== null && part !== '').join(' · ')
+
+/** The model and effort of a request of `id` (the main agent when `id` is undefined). The same state when nothing changes or the subagent is not followed. */
+export const stepModel = (state: ClaudeRadarState, id: string | undefined, info: ModelInfo): ClaudeRadarState => {
+  const same = (current: ModelInfo | undefined) => current?.model === info.model && current.effort === info.effort
+
+  if (id === undefined) return same(state.leaderModel) ? state : { ...state, leaderModel: info }
+  if (!isKnown(state, id) || same(state.subagents[id]!.modelInfo)) return state
+
+  return patchSubagent(state, id, { modelInfo: info })
 }
 
 /** Looks like a test run: `test`, `jest`, `vitest`, `pytest` at the start of a word (so `latest` does not count). */
@@ -468,6 +493,9 @@ export type PaneNow = {
   label: string
   /** Why it waits or is stuck, in words; null when there is no reason to give. */
   reason: string | null
+  /** `opus-4-5 · high`, or null while the model is unknown. */
+  detail: string | null
+  time: string| null
   time: string
   tone: AgentPhase
 }
@@ -482,6 +510,8 @@ export type PaneAgent = {
   task: string | null
   activity: string
   label: string
+  /** `opus-4-5 · high`, or null while the model is unknown. */
+  detail: string | null
   depth: number
 }
 
@@ -495,6 +525,7 @@ const paneAgentOf = (agent: SubagentState, now: number, depth: number, t: Texts)
   task: (agent.task === null ? '' : tidy(agent.task)) || null,
   activity: agent.activity === null ? t.working : t.activity[agent.activity],
   label: t.agent[agent.status],
+  detail: detailOf(agent.modelInfo),
   depth
 })
 
@@ -515,6 +546,7 @@ export const paneOf = (state: ClaudeRadarState, now: number, tick: number, t: Te
         title: checklist.title ?? t.defaultTitle,
         label: t.phase[checklist.phase],
         reason: reasonOf(checklist, t),
+        detail: detailOf(state.leaderModel),
         time: elapsed((checklist.finishedAt ?? now) - checklist.startedAt!),
         tone: checklist.phase
       }

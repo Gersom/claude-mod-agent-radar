@@ -25,6 +25,9 @@ import {
   resumeWork,
   rowsOf as rowsOfIn,
   spawnSubagent,
+  stepModel,
+  shortModel,
+  detailOf,
   startTurn,
   taskIdOf,
   updateTask,
@@ -353,6 +356,7 @@ test('the pane reads the phase: title and time, needs you, stuck, stopped, all d
     title: 'Build my landing page',
     label: 'Working',
     reason: null,
+    detail: null,
     time: '2m 35s',
     tone: 'working'
   })
@@ -372,6 +376,7 @@ test('the pane reads the phase: title and time, needs you, stuck, stopped, all d
   expect(paneOf(finishTurn(working, 'answer', 191_000), 999_000, 0).now).toMatchObject({
     label: 'All done',
     reason: null,
+    detail: null,
     time: '3m 10s',
     tone: 'done'
   })
@@ -2287,7 +2292,7 @@ test('the pane view has the turn, its whole checklist, the subagents at work wit
   const view = paneOf(state, 61_000, 0)
 
   expect(view.isEmpty).toBe(false)
-  expect(view.now).toEqual({ title: 'Build my landing page', label: 'Working', reason: null, time: '1m 00s', tone: 'working' })
+  expect(view.now).toEqual({ title: 'Build my landing page', label: 'Working', reason: null, detail: null, time: '1m 00s', tone: 'working' })
   expect(view.tasks.map(row => row.name)).toEqual(['Analyze', 'Implement'])
   // Live: the ones at work (the finished one is in the history), indented under the parent.
   expect(view.live.map(agent => [agent.name, agent.depth, agent.activity])).toEqual([
@@ -2521,3 +2526,67 @@ test('the desktop surface draws the pane too, and it only reads: the state is as
   await again.unmount()
 })
 
+
+test('a model id is shortened: the prefix, the date and the context mark go; an alias stays', () => {
+  expect(shortModel('claude-opus-4-5-20251101')).toBe('opus-4-5')
+  expect(shortModel('claude-sonnet-5-5')).toBe('sonnet-5-5')
+  expect(shortModel('claude-opus-5-5[1m]')).toBe('opus-5-5')
+  expect(shortModel('us.anthropic.claude-haiku-5-5-20260101')).toBe('haiku-5-5')
+  expect(shortModel('haiku')).toBe('haiku')
+})
+
+test('the detail is the short model and the effort when there is one; nothing known gives null', () => {
+  expect(detailOf(undefined)).toBeNull()
+  expect(detailOf({ model: 'claude-opus-4-5-20251101', effort: 'high' })).toBe('opus-4-5 · high')
+  expect(detailOf({ model: 'haiku', effort: null })).toBe('haiku')
+})
+
+test('a model request sets the main agent model and effort; the same one changes nothing', () => {
+  const info = { model: 'claude-opus-4-5', effort: 'high' }
+  const state = stepModel(startTurn(initialState(), 'go', 0), undefined, info)
+
+  expect(state.leaderModel).toEqual(info)
+  expect(stepModel(state, undefined, { ...info })).toBe(state)
+  expect(paneOf(state, 1000, 0, TEXTS.en).now?.detail).toBe('opus-4-5 · high')
+  expect(stepModel(state, undefined, { model: 'claude-opus-4-5', effort: 'low' }).leaderModel?.effort).toBe('low')
+})
+
+test('a subagent starts with the model of its spawn and takes the effort from its requests; one not followed changes nothing', () => {
+  let state = spawned(initialState(), 'a1', 'Explore', 0, { model: 'haiku' })
+
+  expect(paneOf(state, 1000, 0, TEXTS.en).live[0]?.detail).toBe('haiku')
+
+  state = stepModel(state, 'a1', { model: 'claude-haiku-5-5-20260101', effort: 'low' })
+  expect(paneOf(state, 1000, 0, TEXTS.en).live[0]?.detail).toBe('haiku-5-5 · low')
+  expect(stepModel(state, 'zz', { model: 'x', effort: null })).toBe(state)
+  expect(state.leaderModel).toBeUndefined()
+})
+
+test('a session that ends forgets the models', () => {
+  const state = stepModel(initialState(), undefined, { model: 'opus', effort: 'high' })
+
+  expect(resetSession(state).leaderModel).toBeUndefined()
+})
+
+test('the hook on turn.step records the model and effort of the main agent and of a subagent, and lets the request go on', async ($, on) => {
+  squad(on, 'a1')
+  on('turn.step', async function* ($: any, e: any) {
+    return { turnId: e.turnId, index: e.index, answer: '', toolUses: [] } as never
+  })
+
+  await begin($)
+  await spawn($, 'Explore')
+
+  for await (const _ of $.turn.step({ turnId: 't', index: 0, model: 'claude-opus-4-5-20251101', effort: 'high', messageCount: 1 } as never)) {
+    // The chunks are not the radar's concern.
+  }
+  for await (const _ of $.turn.step({ turnId: 'u', index: 0, model: 'haiku', effort: 'low', messageCount: 1, agentId: 'a1' } as never)) {
+    // Same.
+  }
+
+  const view = await paneView($)
+
+  expect(await view.find({ type: 'Text', text: /opus-4-5 · high/ })).toBeDefined()
+  expect(await view.find({ type: 'Text', text: /haiku · low/ })).toBeDefined()
+  await view.unmount()
+})
