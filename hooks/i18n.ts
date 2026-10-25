@@ -13,13 +13,13 @@ export type Texts = {
   toggle: (enabled: boolean) => string
   /** The toast for a surface that places no panes; `reason` is the engine's own words, as it gave them. */
   paneUnavailable: (reason: string | null) => string
-  /** `Now` (`Ahora`): the pane's section on the turn. */
-  now: string
-  /** `Subagents` (`Subagentes`). */
-  subagents: string
-  /** `2 active` (`2 activos`). */
-  active: (count: number) => string
-  /** `History` (`Historial`). */
+  /** `Current run` (`Ejecución actual`): the pane's section on the turn that runs now. */
+  currentRun: string
+  /** `Main agent` (`Agente principal`): the name of the agent the person talks to. */
+  mainAgent: string
+  /** What the current run says when no turn is open. */
+  ready: string
+  /** `History` (`Historial`): the pane's section on the turns that ended. */
   history: string
   /** What the pane says when there is nothing at all to show. */
   nothing: string
@@ -74,12 +74,12 @@ export const TEXTS: Record<Lang, Texts> = {
     hide: 'Ocultar',
     toggle: enabled => `Claude Radar: ${enabled ? 'ON' : 'OFF'}`,
     paneUnavailable: reason => `El panel de detalle no está disponible aquí${reason ? `: ${reason}` : ''}`,
-    now: 'Ahora',
-    subagents: 'Subagentes',
-    active: count => `${count} ${count === 1 ? 'activo' : 'activos'}`,
+    currentRun: 'Ejecución actual',
+    mainAgent: 'Agente principal',
+    ready: 'Todo listo, esperando instrucciones',
     history: 'Historial',
     nothing: 'Aún no hay nada en marcha',
-    noFinished: 'Aún no hay subagentes terminados',
+    noFinished: 'Aún no hay turnos terminados',
     phase: { working: 'Trabajando', needsYou: 'Te necesita', stuck: 'Atascado', stopped: 'Detenido', done: 'Todo listo' },
     reason: {
       permission: 'Esperando tu permiso',
@@ -115,12 +115,12 @@ export const TEXTS: Record<Lang, Texts> = {
     hide: 'Hide',
     toggle: enabled => `Claude Radar: ${enabled ? 'ON' : 'OFF'}`,
     paneUnavailable: reason => `The detail pane is not available here${reason ? `: ${reason}` : ''}`,
-    now: 'Now',
-    subagents: 'Subagents',
-    active: count => `${count} active`,
+    currentRun: 'Current run',
+    mainAgent: 'Main agent',
+    ready: 'All done, ready for more instructions',
     history: 'History',
     nothing: 'Nothing running yet',
-    noFinished: 'No finished subagents yet',
+    noFinished: 'No finished turns yet',
     phase: { working: 'Working', needsYou: 'Needs you', stuck: 'Stuck', stopped: 'Stopped', done: 'All done' },
     reason: {
       permission: 'Waiting for your permission',

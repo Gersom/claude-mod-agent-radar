@@ -1,4 +1,4 @@
-import type { ActivityCode, AgentPhase, ChecklistTask, ClaudeRadarState, ModelInfo, ReasonCode, SubagentState, SubagentStatus } from '../types'
+import type { ActivityCode, AgentPhase, ChecklistTask, ClaudeRadarState, ModelInfo, ReasonCode, SubagentState, SubagentStatus, TurnRecord } from '../types'
 
 import type { Texts } from './i18n'
 
@@ -15,11 +15,11 @@ export const initialState = (): ClaudeRadarState => ({
     finishedAt: null
   },
   subagents: {},
-  history: [],
+  turns: [],
   tick: 0
 })
 
-/** A session that ended: everything the radar followed is gone; only the ON/OFF choice stays. */
+/** A session that ended: everything the radar followed is gone, the archived turns too; only the ON/OFF choice stays. */
 export const resetSession = (state: ClaudeRadarState): ClaudeRadarState => ({ ...initialState(), claudeRadarEnabled: state.claudeRadarEnabled })
 
 /** The label of the ON/OFF button. */
@@ -34,7 +34,7 @@ export const BAR_WIDTH = 10
 /** The segments the indeterminate bar's moving block fills. */
 const BLOCK_WIDTH = 3
 
-/** Below this many columns the checklist drops its bars. */
+/** Below this many columns the pane drops its bars (the checklist's, the agents' and the turn's). */
 export const BARS_MIN_COLUMNS = 40
 
 /** The most characters of an activity's name. */
@@ -115,9 +115,9 @@ export const bar = (percent: number | null, tick: number) => {
   return '█'.repeat(filled) + '░'.repeat(BAR_WIDTH - filled)
 }
 
-/** A new turn: working from `now`, nothing kept of the last one, its title made from the prompt. */
+/** A new turn: working from `now`, nothing kept of the last one (one still open is archived first, see `forceArchive`), its title made from the prompt. */
 export const startTurn = (state: ClaudeRadarState, text: string, now: number): ClaudeRadarState =>
-  patchChecklist(state, {
+  patchChecklist(forceArchive(state, now), {
     title: clean(text) || null,
     phase: 'working',
     tasks: [],
@@ -210,18 +210,14 @@ export const askUser = (state: ClaudeRadarState): ClaudeRadarState =>
 export const resumeWork = (state: ClaudeRadarState): ClaudeRadarState =>
   state.checklist.phase === 'needsYou' ? patchChecklist(state, { phase: 'working', needsYouReason: null }) : state
 
-/** One step of the timer: the animation moves on and finished subagents are retired. */
-export const advance = (state: ClaudeRadarState, now: number): ClaudeRadarState => {
-  const next = pruneFinished(state, now)
+/** One step of the timer: the animation moves on. */
+export const advance = (state: ClaudeRadarState): ClaudeRadarState => ({ ...state, tick: state.tick + 1 })
 
-  return { ...next, tick: next.tick + 1 }
-}
-
-/** Whether the timer has something to move while the pane is open: a turn at work or waiting, or any subagent still listed (running, or finished and not yet retired). */
+/** Whether the timer has something to move while the pane is open: a turn at work or waiting, or any subagent at work (a finished one is frozen). */
 export const isLive = (state: ClaudeRadarState) => {
   const { phase } = state.checklist
 
-  return phase === 'working' || phase === 'needsYou' || Object.keys(state.subagents).length > 0
+  return phase === 'working' || phase === 'needsYou' || activeCount(state.subagents) > 0
 }
 
 /** Whether the tool rows (calls, results, groups, progress) are hidden now: the radar is ON and work goes on (the main turn working, or any subagent at work), and nobody waits for the person: a call that asks permission stays in view. */
@@ -278,11 +274,8 @@ export const layoutOf = (rows: readonly TaskRow[], bodyColumns: number) => {
   return { showBars, nameWidth: Math.max(1, Math.min(longest, inner - fixed)) }
 }
 
-/** How long a finished subagent stays listed before it is retired, in milliseconds. */
-export const RETIRE_MS = 5000
-
-/** The most finished subagents the history keeps. */
-export const HISTORY_MAX = 50
+/** The most turns the archive keeps. */
+export const TURNS_MAX = 10
 
 /** Below this many columns of the pane body the subagents drop their status column. */
 export const STATUS_MIN_COLUMNS = 36
@@ -391,14 +384,11 @@ export const workSubagent = (state: ClaudeRadarState, id: string, activity: Acti
 
   if (!isChanged) return state
 
-  const revived = patchSubagent(state, id, {
+  return patchSubagent(state, id, {
     activity: activity ?? agent.activity,
     status: 'working',
     finishedAt: null
   })
-
-  // Alive again: it is no longer a finished one.
-  return isActive(agent.status) ? revived : { ...revived, history: revived.history.filter(entry => entry.id !== id) }
 }
 
 /** The subagent waits for the person's permission; only while it is working. */
@@ -411,33 +401,56 @@ export const finishSubagent = (state: ClaudeRadarState, id: string, reason: Turn
 
   const status: SubagentStatus = reason === 'answer' ? 'done' : reason === 'aborted' ? 'stopped' : 'failed'
 
-  const ended = patchSubagent(state, id, { status, finishedAt: now })
-
-  return { ...ended, history: recordHistory(ended.history, ended.subagents[id]!) }
-}
-
-/** The history with `agent` at the front: a copy of its final state, one entry per id, at most `HISTORY_MAX`. */
-export const recordHistory = (history: readonly SubagentState[], agent: SubagentState): SubagentState[] =>
-  [{ ...agent }, ...history.filter(entry => entry.id !== agent.id)].slice(0, HISTORY_MAX)
-
-/** Takes out the subagents that finished `RETIRE_MS` ago or more, making sure each is in the history; the same state when none is due. The history is the pane's; nothing else reads it. */
-export const pruneFinished = (state: ClaudeRadarState, now: number): ClaudeRadarState => {
-  const entries = Object.entries(state.subagents)
-  const isDue = (agent: SubagentState) => agent.finishedAt !== null && now - agent.finishedAt >= RETIRE_MS
-  const due = entries.map(([, agent]) => agent).filter(isDue)
-
-  if (due.length === 0) return state
-
-  const history = due
-    .filter(agent => !state.history.some(entry => entry.id === agent.id))
-    .sort((a, b) => (a.finishedAt ?? 0) - (b.finishedAt ?? 0))
-    .reduce(recordHistory, state.history)
-
-  return { ...state, history, subagents: Object.fromEntries(entries.filter(([, agent]) => !isDue(agent))) }
+  return patchSubagent(state, id, { status, finishedAt: now })
 }
 
 /** How many subagents are at work (running or waiting for the person). */
 export const activeCount = (subagents: Subagents) => Object.values(subagents).filter(agent => isActive(agent.status)).length
+
+/** The turn, closed and put at the front of the archive (at most `TURNS_MAX`); the current turn is left empty. Subagents still at work are stopped at `now`. The model of the main agent, the ON/OFF choice and the tick stay. */
+const archiveTurn = (state: ClaudeRadarState, now: number): ClaudeRadarState => {
+  const { checklist } = state
+  const agents = Object.values(state.subagents)
+    .sort((a, b) => a.startedAt - b.startedAt)
+    .map((agent): SubagentState => (isActive(agent.status) ? { ...agent, status: 'stopped', finishedAt: now } : { ...agent }))
+  // The turn lasts until the main agent and every subagent have ended.
+  const finishedAt = Math.max(checklist.finishedAt ?? now, ...agents.map(agent => agent.finishedAt ?? 0))
+  // A turn cut off while it still worked counts as stopped.
+  const status: TurnRecord['status'] = checklist.phase === 'done' ? 'done' : checklist.phase === 'stuck' ? 'failed' : 'stopped'
+  let id = String(checklist.startedAt)
+
+  while (state.turns.some(turn => turn.id === id)) id += '+'
+
+  const record: TurnRecord = {
+    id,
+    title: checklist.title,
+    status,
+    startedAt: checklist.startedAt!,
+    finishedAt,
+    leader: {
+      ...(state.leaderModel === undefined ? {} : { modelInfo: state.leaderModel }),
+      tasksDone: checklist.tasks.filter(task => task.status === 'done').length,
+      tasksTotal: checklist.tasks.length,
+      finishedAt: checklist.finishedAt ?? now
+    },
+    agents
+  }
+
+  return { ...state, checklist: initialState().checklist, subagents: {}, turns: [record, ...state.turns].slice(0, TURNS_MAX) }
+}
+
+/** Archives the turn at once, whatever is still going on; the same state when there is no turn. */
+export const forceArchive = (state: ClaudeRadarState, now: number): ClaudeRadarState =>
+  state.checklist.startedAt === null ? state : archiveTurn(state, now)
+
+/** Archives the turn once it is over: the main agent has ended (done, stuck or stopped) and no subagent is at work. Otherwise the same state: a subagent in the background keeps the turn open. */
+export const settleTurn = (state: ClaudeRadarState, now: number): ClaudeRadarState => {
+  const { phase, startedAt } = state.checklist
+
+  if (startedAt === null || phase === 'working' || phase === 'needsYou' || activeCount(state.subagents) > 0) return state
+
+  return archiveTurn(state, now)
+}
 
 const SUBAGENT_MARKS = { working: '●', needsYou: '●', done: '✓', failed: '✗', stopped: '■' } as const
 
@@ -487,38 +500,66 @@ export const hideButtonLabel = (t: Texts) => `[ ✕ ${t.hide} ]`
 
 export const paneButtonLabel = (isOpen: boolean, t: Texts) => `[ ◧ ${isOpen ? t.close : t.detail} ]`
 
-/** The pane's `Now` block: the turn's title, its phase with the reason, and its time (frozen once it ended). */
-export type PaneNow = {
-  title: string
-  label: string
-  /** Why it waits or is stuck, in words; null when there is no reason to give. */
-  reason: string | null
-  /** `opus-4-5 · high`, or null while the model is unknown. */
-  detail: string | null
-  time: string| null
-  time: string
-  tone: AgentPhase
-}
-
-/** A subagent in the pane: live or finished, with the whole task (one line, tidied) and the activity, in words. */
-export type PaneAgent = {
+/** What every agent line of the pane has, the main agent's and a subagent's alike. */
+export type PaneRow = {
   id: string
   mark: '●' | '✓' | '✗' | '■'
   status: SubagentStatus
   name: string
   time: string
-  task: string | null
-  activity: string
   label: string
   /** `opus-4-5 · high`, or null while the model is unknown. */
   detail: string | null
+  /** The status bar: the moving block while it works or waits, full once it ended. Never a percentage. */
+  bar: string
+  /** `2/3`, the tasks done of the checklist; null when there is none. */
+  tasks: string | null
+}
+
+/** A subagent in the pane: live or finished, with the whole task (one line, tidied) and the activity, in words. */
+export type PaneAgent = PaneRow & {
+  task: string | null
+  activity: string
   depth: number
 }
 
+/** The turn that runs now: its title, its state line, the main agent with its whole checklist, and the subagents of the turn (at work or finished) with their hierarchy. */
+export type PaneCurrent = {
+  title: string
+  label: string
+  /** Why it waits or is stuck, in words; null when there is no reason to give. */
+  reason: string | null
+  time: string
+  /** The turn's bar: moving while anything runs, full when all ended. */
+  bar: string
+  tone: AgentPhase
+  leader: PaneRow
+  tasks: TaskRow[]
+  agents: PaneAgent[]
+}
+
+/** A turn in the archive: how it ended and how long it took, the main agent and the subagents, each in its final state. */
+export type PaneTurn = {
+  id: string
+  title: string
+  status: TurnRecord['status']
+  mark: PaneRow['mark']
+  label: string
+  time: string
+  leader: PaneRow
+  agents: PaneAgent[]
+}
+
+/** The mark and the status bar of an agent by its status. */
+const looksOf = (status: SubagentStatus, tick: number) => ({
+  mark: SUBAGENT_MARKS[status],
+  bar: isActive(status) ? bar(null, tick) : bar(100, tick)
+})
+
 /** The pane's row of a subagent. */
-const paneAgentOf = (agent: SubagentState, now: number, depth: number, t: Texts): PaneAgent => ({
+const paneAgentOf = (agent: SubagentState, now: number, depth: number, tick: number, t: Texts): PaneAgent => ({
   id: agent.id,
-  mark: SUBAGENT_MARKS[agent.status],
+  ...looksOf(agent.status, tick),
   status: agent.status,
   name: agent.name,
   time: elapsed((agent.finishedAt ?? now) - agent.startedAt),
@@ -526,43 +567,112 @@ const paneAgentOf = (agent: SubagentState, now: number, depth: number, t: Texts)
   activity: agent.activity === null ? t.working : t.activity[agent.activity],
   label: t.agent[agent.status],
   detail: detailOf(agent.modelInfo),
+  tasks: null,
   depth
 })
 
+/** The subagents as pane rows, in start order with their hierarchy. */
+const paneAgentsOf = (subagents: Subagents, now: number, tick: number, t: Texts) =>
+  orderedSubagents(subagents).map(({ agent, depth }) => paneAgentOf(agent, now, depth, tick, t))
+
+/** The main agent's row: `status` is where it stands, `time` how long it has gone. */
+const paneLeaderOf = (
+  status: SubagentStatus,
+  model: ModelInfo | undefined,
+  tasks: { done: number; total: number },
+  time: string,
+  tick: number,
+  t: Texts
+): PaneRow => ({
+  id: 'main',
+  ...looksOf(status, tick),
+  status,
+  name: t.mainAgent,
+  time,
+  label: t.agent[status],
+  detail: detailOf(model),
+  tasks: tasks.total > 0 ? `${tasks.done}/${tasks.total}` : null
+})
+
+/** Where the main agent stands, as a subagent's status is told. */
+const LEADER_STATUS: Record<AgentPhase, SubagentStatus> = { working: 'working', needsYou: 'needsYou', stuck: 'failed', stopped: 'stopped', done: 'done' }
+
+/** The turn's phase: the main agent's, but a turn whose main agent has ended is still working (or waiting for the person) while a subagent is. */
+const turnPhaseOf = (state: ClaudeRadarState): AgentPhase => {
+  const { phase } = state.checklist
+
+  if (phase === 'working' || phase === 'needsYou') return phase
+
+  const agents = Object.values(state.subagents)
+
+  if (agents.some(agent => agent.status === 'needsYou')) return 'needsYou'
+
+  return agents.some(agent => isActive(agent.status)) ? 'working' : phase
+}
+
 /** The reason the turn waits or is stuck, in words; null in any other phase. */
-const reasonOf = (checklist: Checklist, t: Texts) => {
-  const code = checklist.phase === 'needsYou' ? checklist.needsYouReason : checklist.phase === 'stuck' ? checklist.stuckReason : null
+const reasonOf = (checklist: Checklist, phase: AgentPhase, t: Texts) => {
+  const code = phase === 'needsYou' ? (checklist.needsYouReason ?? 'permission') : phase === 'stuck' ? checklist.stuckReason : null
 
   return code === null ? null : t.reason[code]
 }
 
-/** What the detail pane draws, from the state alone and in the language of `t`: the turn (`Now`) and its whole checklist, the subagents at work with their hierarchy, and the history of the finished ones, the most recent first. `isEmpty` when there is nothing at all. */
-export const paneOf = (state: ClaudeRadarState, now: number, tick: number, t: Texts) => {
+/** The current turn as the pane draws it; null when there is none. */
+const currentOf = (state: ClaudeRadarState, now: number, tick: number, t: Texts): PaneCurrent | null => {
   const { checklist } = state
-  const hasTurn = checklist.startedAt !== null
 
-  const current: PaneNow | null = hasTurn
-    ? {
-        title: checklist.title ?? t.defaultTitle,
-        label: t.phase[checklist.phase],
-        reason: reasonOf(checklist, t),
-        detail: detailOf(state.leaderModel),
-        time: elapsed((checklist.finishedAt ?? now) - checklist.startedAt!),
-        tone: checklist.phase
-      }
-    : null
+  if (checklist.startedAt === null) return null
 
-  // A finished one stays listed for a moment but is already in the history: the live list is the ones at work.
-  const live = orderedSubagents(state.subagents)
-    .filter(({ agent }) => isActive(agent.status))
-    .map(({ agent, depth }) => paneAgentOf(agent, now, depth, t))
-  const history = state.history.map(agent => paneAgentOf(agent, now, 0, t))
+  const phase = turnPhaseOf(state)
+  const isRunning = phase === 'working' || phase === 'needsYou'
+  const agents = Object.values(state.subagents)
+  // At work the time runs; once all ended it stops with the last one to end.
+  const end = isRunning ? now : Math.max(checklist.finishedAt ?? now, ...agents.map(agent => agent.finishedAt ?? 0))
+  const time = elapsed(end - checklist.startedAt)
 
   return {
-    isEmpty: !hasTurn && live.length === 0 && history.length === 0,
-    now: current,
-    tasks: hasTurn ? rowsOf(checklist, tick, t) : [],
-    live,
-    history
+    title: checklist.title ?? t.defaultTitle,
+    label: t.phase[phase],
+    reason: reasonOf(checklist, phase, t),
+    time,
+    bar: isRunning ? bar(null, tick) : bar(100, tick),
+    tone: phase,
+    leader: paneLeaderOf(
+      LEADER_STATUS[checklist.phase],
+      state.leaderModel,
+      { done: checklist.tasks.filter(task => task.status === 'done').length, total: checklist.tasks.length },
+      elapsed((checklist.finishedAt ?? now) - checklist.startedAt),
+      tick,
+      t
+    ),
+    tasks: rowsOf(checklist, tick, t),
+    agents: paneAgentsOf(state.subagents, now, tick, t)
   }
+}
+
+/** An archived turn as the pane draws it. */
+const turnOf = (turn: TurnRecord, now: number, tick: number, t: Texts): PaneTurn => {
+  const time = elapsed(turn.finishedAt - turn.startedAt)
+
+  return {
+    id: turn.id,
+    title: turn.title ?? t.defaultTitle,
+    status: turn.status,
+    mark: SUBAGENT_MARKS[turn.status],
+    label: t.agent[turn.status],
+    time,
+    leader: paneLeaderOf(turn.status, turn.leader.modelInfo, { done: turn.leader.tasksDone, total: turn.leader.tasksTotal }, elapsed(turn.leader.finishedAt - turn.startedAt), tick, t),
+    agents: paneAgentsOf(Object.fromEntries(turn.agents.map(agent => [agent.id, agent])), now, tick, t)
+  }
+}
+
+/**
+ * What the detail pane draws, from the state alone and in the language of `t`: the current run (the turn in progress with its main agent, its
+ * whole checklist and its subagents, or nothing when none) and the archived turns, the most recent first. `isEmpty` when there is nothing at all.
+ */
+export const paneOf = (state: ClaudeRadarState, now: number, tick: number, t: Texts) => {
+  const current = currentOf(state, now, tick, t)
+  const turns = state.turns.map(turn => turnOf(turn, now, tick, t))
+
+  return { isEmpty: current === null && turns.length === 0, current, turns }
 }

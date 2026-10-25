@@ -46,6 +46,23 @@ export type ChecklistTask = {
   hasReported: boolean
 }
 
+/** A turn that ended and was archived: what the person asked, how it ended, the main agent's share and the subagents it started. */
+export type TurnRecord = {
+  /** The turn's start time as text, made unique among the archived ones. */
+  id: string
+  /** The title from the prompt, tidied; null when it left nothing to name the turn by (the drawing says so in the language). */
+  title: string | null
+  /** Done when it was answered, stopped when it was cut off, failed when an error or a refusal ended it. */
+  status: 'done' | 'stopped' | 'failed'
+  startedAt: number
+  /** When the main agent and every subagent had ended. */
+  finishedAt: number
+  /** The main agent: its model and effort, and how many of its checklist's tasks were done. */
+  leader: { modelInfo?: ModelInfo; tasksDone: number; tasksTotal: number; finishedAt: number }
+  /** The subagents of the turn, in start order, each in its final state. */
+  agents: SubagentState[]
+}
+
 export type ClaudeRadarState = {
   claudeRadarEnabled: boolean
   checklist: {
@@ -60,9 +77,10 @@ export type ClaudeRadarState = {
   }
   /** The main agent's model and effort, from its model requests; absent until one is seen. */
   leaderModel?: ModelInfo
+  /** The subagents of the current turn, working or finished, until the turn is archived. */
   subagents: Record<string, SubagentState>
-  /** The subagents that finished, the most recent first, at most 50, one entry per id; the detail pane lists it. */
-  history: SubagentState[]
+  /** The turns that ended, the most recent first, at most 10; the detail pane lists them. */
+  turns: TurnRecord[]
   tick: number
 }
 

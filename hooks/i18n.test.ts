@@ -42,7 +42,7 @@ test('each language has its own texts, and a word for everything', async () => {
 
   // No text is empty, in either language.
   for (const texts of [es, en]) {
-    for (const key of ['name', 'detail', 'close', 'now', 'subagents', 'history', 'nothing', 'noFinished', 'working', 'defaultTitle', 'workingOnIt'] as const) {
+    for (const key of ['name', 'detail', 'close', 'currentRun', 'mainAgent', 'ready', 'history', 'nothing', 'noFinished', 'working', 'defaultTitle', 'workingOnIt'] as const) {
       expect(texts[key].length).toBeGreaterThan(0)
     }
     for (const group of [texts.phase, texts.reason, texts.task, texts.agent, texts.activity]) {
@@ -66,10 +66,25 @@ test('the buttons and the toast say ON and OFF the way the button does', async (
   expect([en.detail, en.close]).toEqual(['Detail', 'Close'])
 })
 
-test('the counter and the unavailable pane are put in each language', async () => {
-  expect(en.active(2)).toBe('2 active')
-  expect(es.active(1)).toBe('1 activo')
-  expect(es.active(2)).toBe('2 activos')
+test('the pane sections, the main agent and the ready message are put in each language', async () => {
+  expect([en.currentRun, en.mainAgent, en.ready, en.history]).toEqual(['Current run', 'Main agent', 'All done, ready for more instructions', 'History'])
+  expect([es.currentRun, es.mainAgent, es.ready, es.history]).toEqual([
+    'Ejecución actual',
+    'Agente principal',
+    'Todo listo, esperando instrucciones',
+    'Historial'
+  ])
+  expect([en.nothing, en.noFinished]).toEqual(['Nothing running yet', 'No finished turns yet'])
+  expect([es.nothing, es.noFinished]).toEqual(['Aún no hay nada en marcha', 'Aún no hay turnos terminados'])
+  // Words of the old pane design are gone from both dictionaries.
+  for (const texts of [en, es]) {
+    expect(Object.keys(texts)).not.toContain('now')
+    expect(Object.keys(texts)).not.toContain('subagents')
+    expect(Object.keys(texts)).not.toContain('active')
+  }
+})
+
+test('the unavailable pane is put in each language', async () => {
   expect(en.paneUnavailable(null)).toBe('The detail pane is not available here')
   expect(en.paneUnavailable('narrow')).toBe('The detail pane is not available here: narrow')
   expect(es.paneUnavailable(null)).toBe('El panel de detalle no está disponible aquí')

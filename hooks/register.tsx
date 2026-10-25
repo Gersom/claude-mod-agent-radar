@@ -1,13 +1,12 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { ClaudeRadarState, Lang, ModelInfo } from '../types'
+import type { ClaudeRadarState, Lang, ModelInfo, SubagentStatus } from '../types'
 
 import {
   PANE_COLUMNS,
   PANE_ID,
   PANE_ROWS,
-  RETIRE_MS,
   STATUS_MIN_COLUMNS,
   TICK_MS,
   activityOf,
@@ -19,6 +18,7 @@ import {
   didRun,
   finishSubagent,
   finishTurn,
+  forceArchive,
   hideButtonLabel,
   hidesTools,
   initialState,
@@ -26,9 +26,9 @@ import {
   layoutOf,
   paneButtonLabel,
   paneOf,
-  pruneFinished,
   resetSession,
   resumeWork,
+  settleTurn,
   spawnSubagent,
   stepModel,
   startTurn,
@@ -37,7 +37,7 @@ import {
   workSubagent,
   writeTodos
 } from './claude-radar'
-import type { PaneAgent } from './claude-radar'
+import type { PaneCurrent, PaneRow } from './claude-radar'
 import { NAME, detectLang, textsOf } from './i18n'
 
 /** The key of `$.store` that keeps the ON/OFF choice between sessions. */
@@ -66,6 +66,9 @@ const SUBAGENT_TONE = {
   failed: '#ef4444',
   stopped: '#fb923c'
 } as const
+
+/** The colour of a status bar: the moving one in blue, a finished one in its status colour. */
+const barColor = (status: SubagentStatus) => (status === 'working' ? ACTIVE : SUBAGENT_TONE[status])
 
 /** The radar's state: what the band and the pane draw from. */
 const radar = atom({ plugin: 'agent-radar', key: 'claudeRadarState' } as const, initialState())
@@ -178,7 +181,7 @@ const ensureEnabled = ($: EngineInterface) => {
   return restoring
 }
 
-/** The one timer, only while the pane is open: it moves the animation and the times in the pane and retires finished subagents; a reload starts the module over, without it. */
+/** The one timer, only while the pane is open: it moves the animation and the times in the pane; a reload starts the module over, without it. */
 let ticker: { cancel: () => void } | null = null
 
 const stop = () => {
@@ -199,8 +202,7 @@ const start = async ($: EngineInterface) => {
   if (!state.claudeRadarEnabled || !isLive(state)) return
 
   ticker = $.clock.every(TICK_MS, async () => {
-    const time = await $.clock.now()
-    const current = await change($, previous => advance(previous, time))
+    const current = await change($, previous => advance(previous))
 
     if (!current.claudeRadarEnabled || !isLive(current) || !(await read($, paneOpen))) stop()
   })
@@ -294,7 +296,7 @@ export const register: Register = on => {
   on('session.end', async ($, e, next) => {
     stop()
     earlySteps.clear()
-    // A new session starts clean: what was followed, the history included, goes; the ON/OFF choice stays.
+    // A new session starts clean: what was followed, the archived turns included, goes; the ON/OFF choice stays.
     await change($, state => resetSession(state))
     // The next session reads the language again.
     await update($, langMode, () => null)
@@ -351,6 +353,9 @@ export const register: Register = on => {
   })
 
   on('turn.start', async ($, e, next) => {
+    // A subagent's or teammate's run starts a turn of its own: only the main loop's start is the person's request.
+    if (e.agentId !== undefined) return next(e)
+
     const time = await $.clock.now()
 
     await ensureLang($)
@@ -404,19 +409,19 @@ export const register: Register = on => {
   on('turn.complete', async ($, e, next) => {
     const time = await $.clock.now()
 
+    // Each end may be the last one of the turn: once the main agent and every subagent have ended, the turn is archived in the same write.
     if (e.agentId === undefined) {
-      await change($, state => finishTurn(state, e.reason, time))
+      // Cutting the turn off ends it whole: the subagents still at work are stopped with it.
+      await change($, state => {
+        const ended = finishTurn(state, e.reason, time)
+
+        return e.reason === 'aborted' ? forceArchive(ended, time) : settleTurn(ended, time)
+      })
     } else {
       // A subagent's turn ends that subagent, never the main one; an agent not followed changes nothing.
       const id = e.agentId
 
-      await change($, state => finishSubagent(state, id, e.reason, time))
-      // It leaves the live list a moment later; one write, with the pane open or not (the timer, if running, does it too).
-      $.clock.after(RETIRE_MS, async () => {
-        const later = await $.clock.now()
-
-        await change($, state => pruneFinished(state, later))
-      })
+      await change($, state => settleTurn(finishSubagent(state, id, e.reason, time), time))
     }
 
     return next(e)
@@ -555,7 +560,8 @@ export const register: Register = on => {
     )
   })
 
-  // The detail pane, opened only by the band's button: the turn with its phase and reason, its whole checklist, the subagents at work and the history, always the last state (it never folds). It only reads.
+  // The detail pane, opened only by the band's button: the current run (the turn in progress, with its main agent, its whole checklist and its
+  // subagents) and the history of the turns that ended, one group each. Always the last state (it never folds). It only reads.
   on('ui.render', { component: 'Pane', requestId: PANE_ID }, async ($, e) => {
     const state = await read($, radar)
     const now = await $.clock.now()
@@ -575,13 +581,15 @@ export const register: Register = on => {
       )
     }
 
-    // The body has no frame of its own to take off: four columns are added back for `layoutOf`, which counts the border and padding of a framed block.
-    const { showBars, nameWidth } = layoutOf(view.tasks, columns + 4)
+    // The body has no frame of its own to take off: four columns are added back for `layoutOf`, which counts the border and padding of a framed block; the checklist sits two columns in.
+    const { showBars, nameWidth } = layoutOf(view.current?.tasks ?? [], columns + 2)
     const showStatus = columns >= STATUS_MIN_COLUMNS
+    // The status labels share one width so the bars of the agents line up.
+    const statusWidth = Math.max(...Object.values(t.agent).map(label => label.length))
 
     /** A section's title, with an optional figure at the right. */
     const heading = (key: string, title: string, figure?: string) => (
-      <Box key={key} marginTop={key === 'now' ? 0 : 1}>
+      <Box key={key} marginTop={key === 'current' ? 0 : 1}>
         <Box flexGrow={1} flexShrink={1}>
           <Text wrap="truncate-end" bold>
             {title}
@@ -595,33 +603,38 @@ export const register: Register = on => {
       </Box>
     )
 
-    /** The name and time line of a subagent, live or finished. */
-    const nameLine = (agent: PaneAgent) => (
+    /** The name and time line of an agent, the main one or a subagent; `withTasks` puts the checklist count before the time. */
+    const nameLine = (row: PaneRow, withTasks = false) => (
       <Box>
         <Box flexShrink={0} width={2}>
-          <Text color={SUBAGENT_TONE[agent.status]}>{agent.mark}</Text>
+          <Text color={SUBAGENT_TONE[row.status]}>{row.mark}</Text>
         </Box>
-        <Box flexGrow={agent.detail === null ? 1 : 0} flexShrink={1}>
-          <Text wrap="truncate-end" bold={agent.status === 'working' || agent.status === 'needsYou'}>
-            {agent.name}
+        <Box flexGrow={row.detail === null ? 1 : 0} flexShrink={1}>
+          <Text wrap="truncate-end" bold={row.status === 'working' || row.status === 'needsYou'}>
+            {row.name}
           </Text>
         </Box>
-        {agent.detail === null ? null : (
+        {row.detail === null ? null : (
           <Box flexShrink={1} marginLeft={1}>
             <Text wrap="truncate-end" dimColor>
-              {`· ${agent.detail}`}
+              {`· ${row.detail}`}
             </Text>
           </Box>
         )}
         <Box flexGrow={1} />
+        {withTasks && row.tasks !== null ? (
+          <Box flexShrink={0} marginLeft={2}>
+            <Text dimColor>{row.tasks}</Text>
+          </Box>
+        ) : null}
         <Box flexShrink={0} marginLeft={2}>
-          <Text dimColor>{agent.time}</Text>
+          <Text dimColor>{row.time}</Text>
         </Box>
       </Box>
     )
 
-    /** A dim line under a name, indented past the mark. */
-    const detailLine = (text: string, status?: PaneAgent) => (
+    /** A dim line under a name, indented past the mark; with `row`, its status bar and label at the right. */
+    const detailLine = (text: string, row?: PaneRow) => (
       <Box>
         <Box flexShrink={0} width={2} />
         <Box flexGrow={1} flexShrink={1}>
@@ -629,97 +642,142 @@ export const register: Register = on => {
             {text}
           </Text>
         </Box>
-        {status === undefined || !showStatus ? null : (
+        {row === undefined || !showBars ? null : (
           <Box flexShrink={0} marginLeft={2}>
-            <Text color={SUBAGENT_TONE[status.status]}>{status.label}</Text>
+            <Text color={barColor(row.status)}>{row.bar}</Text>
+          </Box>
+        )}
+        {row === undefined || !showStatus ? null : (
+          <Box flexShrink={0} marginLeft={2} width={statusWidth}>
+            <Text color={SUBAGENT_TONE[row.status]}>{row.label}</Text>
           </Box>
         )}
       </Box>
     )
 
-    return (
-      <Box flexDirection="column">
-        {view.now === null ? null : (
-          <Box key="now-block" flexDirection="column">
-            {heading('now', t.now)}
-            <Text wrap="truncate-end" bold>
-              {view.now.title}
+    /** The line of the turn's state: its bar, its phase with the reason, and the total time. */
+    const turnLine = (current: PaneCurrent) => (
+      <Box>
+        {showBars ? (
+          <Box flexShrink={0} marginRight={2}>
+            <Text color={current.tone === 'working' ? ACTIVE : TONE[current.tone]}>{current.bar}</Text>
+          </Box>
+        ) : null}
+        <Box flexGrow={1} flexShrink={1}>
+          <Box flexShrink={0}>
+            <Text wrap="truncate-end" bold color={TONE[current.tone]}>
+              {current.label}
             </Text>
-            <Box>
-              <Box flexGrow={1} flexShrink={1}>
-                <Box flexShrink={0}>
-                  <Text wrap="truncate-end" bold color={TONE[view.now.tone]}>
-                    {view.now.label}
+          </Box>
+          {current.reason === null ? null : (
+            <Box flexShrink={1}>
+              <Text wrap="truncate-end" dimColor>
+                {` · ${current.reason}`}
+              </Text>
+            </Box>
+          )}
+        </Box>
+        <Box flexShrink={0} marginLeft={2}>
+          <Text dimColor>{current.time}</Text>
+        </Box>
+      </Box>
+    )
+
+    /** The whole run of the turn in progress. */
+    const currentBlock = (current: PaneCurrent) => (
+      <Box flexDirection="column">
+        <Text wrap="truncate-end" bold>
+          {current.title}
+        </Text>
+        {turnLine(current)}
+        <Box key="leader" flexDirection="column">
+          {nameLine(current.leader)}
+          {detailLine(current.leader.tasks ?? '', current.leader)}
+        </Box>
+        <Box key="checklist" flexDirection="column" marginLeft={2}>
+          {current.tasks.map((row, index) => (
+            <Box key={`task-${index}`}>
+              <Box flexShrink={0} width={2}>
+                <Text color={row.status === 'done' ? GREEN : row.status === 'active' ? ACTIVE : undefined} dimColor={row.status === 'upcoming'}>
+                  {row.mark}
+                </Text>
+              </Box>
+              <Box flexShrink={0} width={nameWidth}>
+                <Text wrap="truncate-end" bold={row.status === 'active'} dimColor={row.status !== 'active'}>
+                  {row.name}
+                </Text>
+              </Box>
+              {showBars ? (
+                <Box flexShrink={0} marginLeft={2}>
+                  <Text color={row.status === 'done' ? GREEN : row.status === 'active' ? ACTIVE : undefined} dimColor={row.status === 'upcoming'}>
+                    {row.bar}
                   </Text>
                 </Box>
-                {view.now.reason === null ? null : (
-                  <Box flexShrink={1}>
-                    <Text wrap="truncate-end" dimColor>
-                      {` · ${view.now.reason}`}
-                    </Text>
-                  </Box>
-                )}
-                {view.now.detail === null ? null : (
-                  <Box flexShrink={1}>
-                    <Text wrap="truncate-end" dimColor>
-                      {` · ${view.now.detail}`}
-                    </Text>
-                  </Box>
-                )}
-              </Box>
+              ) : null}
               <Box flexShrink={0} marginLeft={2}>
-                <Text dimColor>{view.now.time}</Text>
+                <Text dimColor={row.status !== 'active'}>{row.label}</Text>
               </Box>
             </Box>
-            {view.tasks.map((row, index) => (
-              <Box key={`task-${index}`}>
-                <Box flexShrink={0} width={2}>
-                  <Text color={row.status === 'done' ? GREEN : row.status === 'active' ? ACTIVE : undefined} dimColor={row.status === 'upcoming'}>
-                    {row.mark}
-                  </Text>
-                </Box>
-                <Box flexShrink={0} width={nameWidth}>
-                  <Text wrap="truncate-end" bold={row.status === 'active'} dimColor={row.status !== 'active'}>
-                    {row.name}
-                  </Text>
-                </Box>
-                {showBars ? (
-                  <Box flexShrink={0} marginLeft={2}>
-                    <Text color={row.status === 'done' ? GREEN : row.status === 'active' ? ACTIVE : undefined} dimColor={row.status === 'upcoming'}>
-                      {row.bar}
-                    </Text>
-                  </Box>
-                ) : null}
-                <Box flexShrink={0} marginLeft={2}>
-                  <Text dimColor={row.status !== 'active'}>{row.label}</Text>
-                </Box>
-              </Box>
-            ))}
+          ))}
+        </Box>
+        {current.agents.map(agent => (
+          <Box key={`agent-${agent.id}`} flexDirection="column" paddingLeft={agent.depth * 2}>
+            {nameLine(agent)}
+            {agent.task === null ? null : detailLine(agent.task)}
+            {detailLine(agent.status === 'working' || agent.status === 'needsYou' ? agent.activity : '', agent)}
           </Box>
-        )}
-        {view.live.length === 0 ? null : (
-          <Box key="live-block" flexDirection="column">
-            {heading('live', t.subagents, t.active(view.live.length))}
-            {view.live.map(agent => (
-              <Box key={`live-${agent.id}`} flexDirection="column" paddingLeft={agent.depth * 2}>
-                {nameLine(agent)}
-                {agent.task === null ? null : detailLine(agent.task)}
-                {detailLine(agent.activity, agent)}
-              </Box>
-            ))}
-          </Box>
-        )}
+        ))}
+      </Box>
+    )
+
+    return (
+      <Box flexDirection="column">
+        <Box key="current-block" flexDirection="column">
+          {heading('current', t.currentRun)}
+          {view.current === null ? (
+            <Text wrap="truncate-end" dimColor>
+              {t.ready}
+            </Text>
+          ) : (
+            currentBlock(view.current)
+          )}
+        </Box>
         <Box key="history-block" flexDirection="column">
-          {heading('history', t.history, view.history.length === 0 ? undefined : String(view.history.length))}
-          {view.history.length === 0 ? (
+          {heading('history', t.history, view.turns.length === 0 ? undefined : String(view.turns.length))}
+          {view.turns.length === 0 ? (
             <Text wrap="truncate-end" dimColor>
               {t.noFinished}
             </Text>
           ) : (
-            view.history.map(agent => (
-              <Box key={`history-${agent.id}`} flexDirection="column">
-                {nameLine(agent)}
-                {detailLine(agent.task === null ? agent.label : `${agent.label} · ${agent.task}`)}
+            view.turns.map((turn, index) => (
+              <Box key={`turn-${turn.id}`} flexDirection="column" marginTop={index === 0 ? 0 : 1}>
+                <Box>
+                  <Box flexShrink={0} width={2}>
+                    <Text color={SUBAGENT_TONE[turn.status]}>{turn.mark}</Text>
+                  </Box>
+                  <Box flexGrow={1} flexShrink={1}>
+                    <Text wrap="truncate-end" bold>
+                      {turn.title}
+                    </Text>
+                  </Box>
+                  {showStatus ? (
+                    <Box flexShrink={0} marginLeft={2}>
+                      <Text color={SUBAGENT_TONE[turn.status]}>{turn.label}</Text>
+                    </Box>
+                  ) : null}
+                  <Box flexShrink={0} marginLeft={2}>
+                    <Text dimColor>{turn.time}</Text>
+                  </Box>
+                </Box>
+                <Box flexDirection="column" paddingLeft={2}>
+                  {nameLine(turn.leader, true)}
+                  {turn.agents.map(agent => (
+                    <Box key={`turn-${turn.id}-${agent.id}`} flexDirection="column" paddingLeft={agent.depth * 2}>
+                      {nameLine(agent)}
+                      {detailLine(agent.task === null ? agent.label : `${agent.label} · ${agent.task}`)}
+                    </Box>
+                  ))}
+                </Box>
               </Box>
             ))
           )}
