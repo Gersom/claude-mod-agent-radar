@@ -34,6 +34,7 @@ Con el radar en `ON` y Claude trabajando (en inglés, el idioma por defecto; ver
 
 ```text
 ● Current run                         Total time · 3m 36s · 19.8k tokens
+  ___________
 Build my landing page
 ● Main agent · opus-4-5 · high    Working   3m 36s   230  ███░░░░░░░
   1/3
@@ -49,13 +50,14 @@ Build my landing page
     ● backend-developer             Working   2m 05s 18.4k  ███░░░░░░░
       Reviewing authentication routes
       Working
-────────────────────────────────────────────────────────────
-History                                                2 runs
+
+History (2 runs)
+________________
 ✗ Fix the login bug              Failed   4m 02s   9.8k tokens
   ✗ Main agent · opus-4-5 · high    1/2   4m 02s         6k
   ✓ Explore · haiku                Done   1m 10s       3.8k
     Mapping the repo
-────────────────────────────────────────────────────────────
+
 ✓ Quick question                 Done        12s    410 tokens
   ✓ Main agent · opus-4-5 · high             12s         410
 ```
@@ -111,6 +113,7 @@ Claude Radar                         [ ◧ Detalle ] [ ● Claude Radar: ON ] [ 
 
 ```text
 ● Ejecución actual                 Tiempo total · 3m 36s · 19.8k tokens
+  ________________
 Build my landing page
 ● Agente principal · opus-4-5 · high  Trabajando  3m 36s  230  ███░░░░░░░
   1/3
@@ -122,8 +125,9 @@ Build my landing page
   ● frontend-developer · haiku     Trabajando  3m 10s  1.2k  ███░░░░░░░
     Building the login components
     Leyendo archivos del proyecto
-────────────────────────────────────────────────────────────
-Historial                                         2 ejecuciones
+
+Historial (2 ejecuciones)
+_________________________
 ✗ Fix the login bug              Falló    4m 02s   9.8k tokens
   ✗ Agente principal · opus-4-5 · high  1/2  4m 02s        6k
   ✓ Explore · haiku                Hecho    1m 10s       3.8k
@@ -134,7 +138,7 @@ Sin nada en marcha, la ejecución actual dice `Todo listo, esperando instruccion
 
 ## Qué muestra el panel
 
-Sin límite de filas (el motor lo desplaza); todo se trunca con `…` al ancho del panel. Dos secciones, separadas por una fila en blanco (sin línea); cada título lleva debajo una línea fina y tenue (`╌`, cortada al ancho) que lo separa de su contenido. Las líneas finas que quedan, dentro de la ejecución actual, son `─` atenuadas y cortadas al ancho (el kit de dibujo no permite un borde de un solo lado, así que son un `Text`):
+Sin límite de filas (el motor lo desplaza); todo se trunca con `…` al ancho del panel. Dos secciones, separadas por una fila en blanco (sin línea); cada título lleva debajo una línea de guiones bajos (`_`, atenuada) tan larga como el propio título, que lo separa de su contenido. Las líneas finas que quedan, dentro de la ejecución actual, son `─` atenuadas y cortadas al ancho (el kit de dibujo no permite un borde de un solo lado, así que son un `Text`):
 
 - **Current run** (ejecución actual): el turno en curso.
   - **Encabezado:** a la izquierda `●` y el título de la sección; a la derecha el tiempo total del turno y sus tokens (`Total time · 3m 36s · 19.8k tokens`; los tokens solo si los hay y el panel es ancho). El `●` es verde y parpadea con el temporizador mientras algo corre (amarillo si alguien te espera); cuando todo terminó queda quieto y atenuado con la marca del final (`✓`, `✗` o `■`), cosa que casi no se ve porque el turno se archiva en ese momento. Sin turno en curso, el `●` va atenuado.
@@ -142,7 +146,7 @@ Sin límite de filas (el motor lo desplaza); todo se trunca con `…` al ancho d
   - El **agente principal** (`Main agent`): su fila (ver abajo), `hechas/total` en la línea de debajo si hay checklist y, después, el checklist completo.
   - El bloque de los **subagentes del turno** (los que trabajan y los que ya terminaron), sangrado bajo el agente principal y con su jerarquía (ver «Subagentes»): un título `Subagents` con el contador de los activos a la derecha (`2 active`; en verde si hay alguno, atenuado si no) y, bajo él, una fila por agente separada de la siguiente por una línea fina.
   - Sin turno en curso: `All done, ready for more instructions`.
-- **History** (historial): el título con el número de turnos a la derecha (`2 runs`; `1 run` en singular) y un grupo por turno terminado, el más reciente primero, separados por una fila en blanco, sin líneas (ver «Historial»). Vacío: `No finished turns yet`.
+- **History** (historial): el título con el número de turnos entre paréntesis, pegado al título y no alineado a la derecha (`History (2 runs)`; `History (1 run)` en singular) y un grupo por turno terminado, el más reciente primero, separados por una fila en blanco, sin líneas (ver «Historial»). Vacío: `No finished turns yet`.
 
 Sin ningún turno, ni en curso ni terminado: `Nothing running yet`.
 

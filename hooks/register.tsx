@@ -58,8 +58,8 @@ const TONE = {
   done: '#22c55e'
 } as const
 
-/** The character of the faint line under a section's title: lighter than the `─` of the lines inside the run. */
-const TITLE_RULE = '╌'
+/** The character of the faint line under a section's title; the line is as long as the title, no longer. */
+const TITLE_RULE = '_'
 
 const GREEN = '#22c55e'
 const ACTIVE = '#38bdf8'
@@ -637,7 +637,7 @@ export const register: Register = on => {
       </Box>
     )
 
-    /** A section's title, with an optional figure at the right and a mark before it, and a faint line under the whole row that sets it apart from its content. */
+    /** A section's title, with an optional figure at the right and a mark before it, and a faint line under the title (as long as the title) that sets it apart from its content. */
     const heading = (mark: ReturnType<typeof markCell> | null, title: string, figure?: string) => (
       <Box flexDirection="column">
         <Box>
@@ -655,9 +655,11 @@ export const register: Register = on => {
             </Box>
           )}
         </Box>
-        <Text wrap="truncate-end" dimColor>
-          {TITLE_RULE.repeat(Math.max(1, columns))}
-        </Text>
+        <Box paddingLeft={mark === null ? 0 : 2}>
+          <Text wrap="truncate-end" dimColor>
+            {TITLE_RULE.repeat(Math.max(1, Math.min(title.length, columns)))}
+          </Text>
+        </Box>
       </Box>
     )
 
@@ -864,7 +866,7 @@ export const register: Register = on => {
           )}
         </Box>
         <Box key="history-block" flexDirection="column" marginTop={1}>
-          {heading(null, t.history, view.turns.length === 0 ? undefined : t.runs(view.turns.length))}
+          {heading(null, view.turns.length === 0 ? t.history : `${t.history} (${t.runs(view.turns.length)})`)}
           {view.turns.length === 0 ? (
             <Text wrap="truncate-end" dimColor>
               {t.noFinished}
