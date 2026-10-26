@@ -1679,11 +1679,11 @@ test('a narrow pane keeps every line of a subagent and cuts its name and task wi
       expect(text.props?.wrap).toBe('truncate-end')
     }
 
-    // The name gives way first: its cell shrinks and the cell of the model and effort does not.
+    // The name and the model and effort give way together: both cells shrink, so nothing overflows.
     const cells = (await narrow.findAll({ type: 'Box' })) as { props?: { flexShrink?: number; marginLeft?: number }; text: string }[]
 
     expect(cells.filter(cell => cell.props?.flexShrink === 1 && cell.text === 'a-very-long-custom-agent-name-for-the-frontend')).toHaveLength(1)
-    expect(cells.filter(cell => cell.props?.flexShrink === 0 && cell.props.marginLeft === 1).map(cell => cell.text)).toEqual(['· m'])
+    expect(cells.filter(cell => cell.props?.flexShrink === 1 && cell.props.marginLeft === 1).map(cell => cell.text)).toEqual(['· m'])
     await expectFits(narrow, columns)
     await narrow.unmount()
   }
