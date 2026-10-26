@@ -3583,3 +3583,29 @@ test('each section title has a faint line under it, as long as the title', async
     await ui.unmount()
   }
 })
+
+test('the history has no green: a finished turn and its agents are drawn in the default colour, and the other colours stay', async ($, on) => {
+  squad(on, 'a1')
+
+  await begin($)
+  await spawn($, 'Explore')
+  await finish($, 'answer', 'a1')
+  await finish($)
+  await begin($, 'Fix the login bug')
+  await finish($, 'error')
+
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await paneView($, 60, surface)
+
+    // Nothing is running: no green anywhere in the pane, the history included; the failed turn keeps its red.
+    const colours = ((await ui.findAll({ type: 'Text' })) as { props?: { color?: string } }[]).map(text => text.props?.color)
+
+    expect(colours).not.toContain('#22c55e')
+    expect(colours).toContain('#ef4444')
+    const done = (await ui.find({ type: 'Text', text: /^Done$/ })) as { props?: { color?: string } } | undefined
+
+    expect(done).toBeDefined()
+    expect(done?.props?.color).toBeUndefined()
+    await ui.unmount()
+  }
+})

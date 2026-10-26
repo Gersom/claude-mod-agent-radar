@@ -73,6 +73,9 @@ const SUBAGENT_TONE = {
 } as const
 
 /** The colour of a status bar (an agent at work has one): blue while it works, yellow while it waits for the person. */
+/** The colour of a status: the history draws a finished turn's `Done` in the default colour, not green; every other colour stays. */
+const toneOf = (status: SubagentStatus, inHistory = false) => (inHistory && status === 'done' ? undefined : SUBAGENT_TONE[status])
+
 const barColor = (status: SubagentStatus) => (status === 'working' ? ACTIVE : SUBAGENT_TONE[status])
 
 /** The radar's state: what the band and the pane draw from. */
@@ -654,9 +657,9 @@ export const register: Register = on => {
     )
 
     /** The first line of an agent, the main one or a subagent: its mark, its name and `· model · effort` dim. The name gives way to the width first; the model and effort stay. */
-    const headLine = (row: PaneRow) => (
+    const headLine = (row: PaneRow, inHistory = false) => (
       <Box>
-        {markCell(row.mark, SUBAGENT_TONE[row.status])}
+        {markCell(row.mark, toneOf(row.status, inHistory))}
         <Box flexGrow={1} flexShrink={1}>
           <Box flexShrink={1}>
             <Text wrap="truncate-end" bold={isAtWork(row.status)}>
@@ -678,10 +681,10 @@ export const register: Register = on => {
      * The status line of an agent or of a turn: its status word in its colour, then the tasks done (the main agent's), the time and the tokens, dim, separated by `·`,
      * and, at its end, the agent's one bar (`bar`): the moving block while it is at work, nothing for a finished agent or a turn. Never a percentage.
      */
-    const statusLine = (status: SubagentStatus, label: string, fields: string[], bar: string | null = null) => (
+    const statusLine = (status: SubagentStatus, label: string, fields: string[], bar: string | null = null, inHistory = false) => (
       <Box>
         <Box flexShrink={0}>
-          <Text color={SUBAGENT_TONE[status]}>{label}</Text>
+          <Text color={toneOf(status, inHistory)}>{label}</Text>
         </Box>
         <Box flexShrink={1}>
           <Text wrap="truncate-end" dimColor>
@@ -720,13 +723,13 @@ export const register: Register = on => {
      * An agent in lines, one under the other: its head line and, two columns in, what it was asked (`task`), what it does now (`activity`, only while at work),
      * its status line with its bar at the end (only while at work) and, for the main agent, its checklist (`after`).
      */
-    const agentBlock = (row: PaneRow, task: string | null, activity: string | null, after: ReturnType<typeof checklist> | null = null) => (
+    const agentBlock = (row: PaneRow, task: string | null, activity: string | null, after: ReturnType<typeof checklist> | null = null, inHistory = false) => (
       <Box flexDirection="column">
-        {headLine(row)}
+        {headLine(row, inHistory)}
         <Box flexDirection="column" paddingLeft={2}>
           {task === null ? null : noteLine(task)}
           {activity === null ? null : noteLine(activity)}
-          {statusLine(row.status, row.label, statusFields(row, t), row.bar)}
+          {statusLine(row.status, row.label, statusFields(row, t), row.bar, inHistory)}
           {after}
         </Box>
       </Box>
@@ -784,19 +787,19 @@ export const register: Register = on => {
       view.turns.map((turn, index) => (
         <Box key={`turn-${turn.id}`} flexDirection="column" marginTop={index === 0 ? 0 : 1}>
           <Box>
-            {markCell(turn.mark, SUBAGENT_TONE[turn.status])}
+            {markCell(turn.mark, toneOf(turn.status, true))}
             <Box flexGrow={1} flexShrink={1}>
               <Text wrap="truncate-end" bold>
                 {turn.title}
               </Text>
             </Box>
           </Box>
-          <Box paddingLeft={2}>{statusLine(turn.status, turn.label, statusFields(turn, t))}</Box>
+          <Box paddingLeft={2}>{statusLine(turn.status, turn.label, statusFields(turn, t), null, true)}</Box>
           <Box flexDirection="column" paddingLeft={4}>
-            {agentBlock(turn.leader, null, null)}
+            {agentBlock(turn.leader, null, null, null, true)}
             {turn.agents.map(agent => (
               <Box key={`turn-${turn.id}-${agent.id}`} flexDirection="column" paddingLeft={agent.depth * 2}>
-                {agentBlock(agent, agent.task, null)}
+                {agentBlock(agent, agent.task, null, null, true)}
               </Box>
             ))}
           </Box>

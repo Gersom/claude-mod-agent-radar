@@ -253,6 +253,8 @@ Un turno se **archiva** cuando el agente principal terminó (bien, con error o i
 
 El panel dibuja un grupo por turno, siempre abierto, con el mismo diseño vertical que la ejecución actual (ver «Cada agente en líneas»): una cabecera (`marca título`) y debajo, sangrado dos columnas, su estado final con su color, duración y tokens (`Done · 3m 10s · 1.3k tokens`; el estado del turno usa su propia etiqueta y color). Dentro, sangrados cuatro columnas, el agente principal (cabecera con modelo y esfuerzo y su línea de estado con `hechas/total` si había tareas, tiempo y tokens) y sus subagentes con su jerarquía, cada uno con su estado final, duración, tokens y, en su línea, su tarea (la actividad no se conserva). Sin barras: ningún agente terminado la lleva. Un turno sin subagentes muestra solo el agente principal. Entre un grupo y el siguiente va una fila en blanco, sin líneas. El checklist y el motivo exacto de un error no se conservan en el historial.
 
+El historial **no usa el verde**: un turno o un agente terminado con éxito (`✓` y `Done`) se dibuja en el color normal del texto, y los demás colores se mantienen (rojo para `Failed`, naranja para `Stopped`). La ejecución actual conserva sus colores, incluido el verde de lo que trabaja.
+
 Si empieza un turno nuevo mientras el anterior sigue abierto (el principal ya terminó pero un subagente sigue activo), el anterior se archiva a la fuerza: los subagentes aún activos pasan a `Stopped` y el turno nuevo empieza vacío. Al terminar la sesión (`session.end`, también con `/clear`) se borra todo lo que el radar seguía, el historial incluido; solo se conserva la elección ON/OFF.
 
 ## Botón ON/OFF
