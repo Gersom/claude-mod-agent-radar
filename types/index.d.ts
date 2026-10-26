@@ -43,7 +43,7 @@ export type ChecklistTask = {
   /** The task as the text gave it, tidied; empty when nothing valid was left (the drawing says so in the language). */
   name: string
   status: 'done' | 'active' | 'upcoming'
-  /** A real percentage only; null draws the indeterminate bar. */
+  /** A real percentage only; null when none is known (always, today: no tool gives one). The pane draws no bar for a task. */
   percent: number | null
   hasReported: boolean
 }

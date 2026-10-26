@@ -1,8 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 
 import {
-  STATUS_MIN_COLUMNS,
-  TOKENS_MIN_COLUMNS,
   TURNS_MAX,
   activityOf,
   addTask,
@@ -20,7 +18,6 @@ import {
   hidesTools,
   initialState,
   isLive,
-  layoutOf,
   normalizeActivity,
   paneButtonLabel as paneButtonLabelIn,
   paneOf as paneOfIn,
@@ -33,6 +30,7 @@ import {
   shortModel,
   detailOf,
   startTurn,
+  statusFields,
   taskIdOf,
   tokensOf,
   updateTask,
@@ -47,7 +45,7 @@ const es = TEXTS.es
 
 // The reducers' views take the words of a language; these read English unless a test says otherwise.
 const paneOf = (state: Parameters<typeof paneOfIn>[0], now: number, tick: number, t: Texts = en) => paneOfIn(state, now, tick, t)
-const rowsOf = (checklist: Parameters<typeof rowsOfIn>[0], tick: number, t: Texts = en) => rowsOfIn(checklist, tick, t)
+const rowsOf = (checklist: Parameters<typeof rowsOfIn>[0], t: Texts = en) => rowsOfIn(checklist, t)
 const paneButtonLabel = (isOpen: boolean, t: Texts = en) => paneButtonLabelIn(isOpen, t)
 
 const BAND = {
@@ -403,51 +401,35 @@ test('the current run reads the phase: title and total time, needs you, stuck, s
 test('the rows are the tasks, or the one line that says the agent works; never invented steps', async () => {
   const working = startTurn(initialState(), 'go', 0)
 
-  expect(rowsOf(working.checklist, 0)).toEqual([
-    { mark: '▶', name: 'Working on your request', bar: '███░░░░░░░', label: 'Working', status: 'active' }
-  ])
-  expect(rowsOf(finishTurn(working, 'answer', 1).checklist, 0)).toEqual([])
-  expect(rowsOf(askUser(working).checklist, 0)).toEqual([])
+  expect(rowsOf(working.checklist)).toEqual([{ mark: '▶', name: 'Working on your request', status: 'active' }])
+  expect(rowsOf(finishTurn(working, 'answer', 1).checklist)).toEqual([])
+  expect(rowsOf(askUser(working).checklist)).toEqual([])
 
   const rows = rowsOf(
     writeTodos(working, [
       { content: 'Analyze', status: 'completed' },
       { content: 'Implement', status: 'in_progress' },
       { content: 'Test', status: 'pending' }
-    ]).checklist,
-    2
+    ]).checklist
   )
 
-  expect(rows.map(row => `${row.mark} ${row.name} ${row.bar} ${row.label.trim()}`)).toEqual([
-    '✓ Analyze ██████████ Done',
-    '▶ Implement ░░███░░░░░ Working',
-    '○ Test ░░░░░░░░░░ Next'
+  // A row is the mark and the name of its task and nothing else: no bar, no label of its status.
+  expect(rows).toEqual([
+    { mark: '✓', name: 'Analyze', status: 'done' },
+    { mark: '▶', name: 'Implement', status: 'active' },
+    { mark: '○', name: 'Test', status: 'upcoming' }
   ])
-  // The labels are padded to one width so the bars line up.
-  expect(new Set(rows.map(row => row.label.length)).size).toBe(1)
+  // A task with no valid text takes the language's name.
+  expect(rowsOf({ ...working.checklist, tasks: [{ id: '0', name: '', status: 'upcoming', percent: null, hasReported: true }] }, es)).toEqual([
+    { mark: '○', name: 'En ello', status: 'upcoming' }
+  ])
 })
 
-test('the layout drops the bars below 40 columns and never lets a row pass the inner width', async () => {
-  const rows = rowsOf(
-    writeTodos(startTurn(initialState(), 'go', 0), [{ content: 'x'.repeat(40), status: 'in_progress' }]).checklist,
-    0
-  )
-
-  for (const columns of [20, 30, 39, 40, 60, 80, 120]) {
-    const { showBars, nameWidth } = layoutOf(rows, columns)
-
-    expect(showBars).toBe(columns >= 40)
-    // mark + name + bar and its gap + label and its gap
-    const width = 2 + nameWidth + (showBars ? 12 : 0) + 9
-
-    expect(nameWidth).toBeGreaterThanOrEqual(1)
-    if (columns - 4 >= 2 + 1 + (showBars ? 12 : 0) + 9) expect(width).toBeLessThanOrEqual(columns - 4)
-  }
-
-  // A short name does not take the room of a long one.
-  const short = rowsOf(writeTodos(startTurn(initialState(), 'go', 0), [{ content: 'Test', status: 'pending' }]).checklist, 0)
-
-  expect(layoutOf(short, 120).nameWidth).toBe(4)
+test('the fields after a status word go in this order: the tasks done, the time, the tokens with their unit; the missing ones are left out', async () => {
+  expect(statusFields({ tasks: '1/2', time: '3m 36s', tokens: '230' }, en)).toEqual(['1/2', '3m 36s', '230 tokens'])
+  expect(statusFields({ tasks: null, time: '1m 20s', tokens: '18.4k' }, en)).toEqual(['1m 20s', '18.4k tokens'])
+  expect(statusFields({ time: '12s', tokens: null }, en)).toEqual(['12s'])
+  expect(statusFields({ tasks: '2/3', time: '1m 10s', tokens: '1.2k' }, es)).toEqual(['2/3', '1m 10s', '1.2k tokens'])
 })
 
 const MS = 1000
@@ -510,6 +492,59 @@ const paneView = ($: any, bodyColumns = 60, surface: 'terminal' | 'desktop' = 't
     requestId: 'agent-radar',
     props: { title: 'Claude Radar', isFocused: false, bodyColumns, placement: surface === 'desktop' ? 'dock' : 'inline' } as never
   } as never)
+
+type PaneNode = { type: string; props?: Record<string, unknown>; text?: string; children?: (PaneNode | string)[] }
+
+/** The width of a space a Box asks for (`paddingLeft`, `marginLeft`) or the rows of one (`marginTop`, `marginBottom`). */
+const spaceOf = (node: PaneNode, prop: string) => Number(node.props?.[prop] ?? 0)
+
+/** The words of a Text: its children are strings (the nodes inside a tree carry no `text` of their own, only the ones a query returns). */
+const textOf = (node: PaneNode | string): string => (typeof node === 'string' ? node : (node.children ?? []).map(textOf).join(''))
+
+/** A row of Boxes as one line of text: each cell as wide as it asks, one after the other. */
+const cellOf = (node: PaneNode): string => {
+  if (node.type === 'Text') return textOf(node)
+
+  const text = (node.children ?? []).filter((child): child is PaneNode => typeof child !== 'string').map(cellOf).join('')
+  const width = spaceOf(node, 'width')
+
+  return ' '.repeat(spaceOf(node, 'marginLeft')) + (width > 0 ? text.padEnd(width) : text)
+}
+
+/** What a Box draws, line by line: a column stacks its children and a row puts them on one line; `padding` and `margin` give the indentation and the blank rows. */
+const boxLines = (node: PaneNode): string[] => {
+  if (node.type === 'Text') return [textOf(node)]
+
+  const kids = (node.children ?? []).filter((child): child is PaneNode => typeof child !== 'string')
+  const inner = node.props?.flexDirection === 'column' ? kids.flatMap(boxLines) : kids.length === 0 ? [] : [kids.map(cellOf).join('')]
+  const indent = ' '.repeat(spaceOf(node, 'paddingLeft') + spaceOf(node, 'marginLeft'))
+
+  return [...Array(spaceOf(node, 'marginTop')).fill(''), ...inner.map(line => (line === '' ? line : indent + line)), ...Array(spaceOf(node, 'marginBottom')).fill('')]
+}
+
+/** The pane as it reads on screen, one string per line (blank rows included), the way the layout puts the Boxes one under the other. */
+const paneLines = async (ui: any) => boxLines((await ui.find({ type: 'Box' })) as PaneNode)
+
+/** The lines without the underlines of the titles, which the pane cuts to its width (30 columns at most) and are the only lines that change with it. */
+const withoutRules = (lines: string[]) => lines.filter(line => !/^_+$/.test(line))
+
+/** `count` lines of the pane from the first one that matches `from`. */
+const blockOf = (lines: string[], from: RegExp, count: number) => {
+  const at = lines.findIndex(line => from.test(line))
+
+  return lines.slice(at, at + count)
+}
+
+/**
+ * That nothing in the pane passes its width: the kit has no layout, so this checks what keeps it from happening. Every text that carries words of the
+ * person, of an agent or the radar's own (a name, a title, a task, a status line, the underline) is cut with `…` by its `truncate-end`; the only ones left
+ * to their own width are the marks and the status words, shorter than any pane.
+ */
+const expectFits = async (ui: any, columns: number) => {
+  for (const text of (await ui.findAll({ type: 'Text' })) as { text: string; props?: { wrap?: string } }[]) {
+    if (text.props?.wrap !== 'truncate-end') expect(text.text.length).toBeLessThanOrEqual(Math.min(11, columns))
+  }
+}
 
 /** Opens the pane the way the person does, pressing the band's button; returns the band. */
 const openPane = async ($: any) => {
@@ -576,12 +611,23 @@ test('a turn shows its title, its time and the working line in the pane, on both
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await paneView($, 60, surface)
 
-    expect(await ui.find({ type: 'Text', text: /^Current run$/ })).toBeDefined()
-    expect(await ui.find({ type: 'Text', text: /^Build my landing page$/ })).toBeDefined()
-    expect(await ui.find({ type: 'Text', text: /^Working$/ })).toBeDefined()
-    expect(await ui.find({ type: 'Text', text: /^Main agent$/ })).toBeDefined()
-    expect(await ui.find({ type: 'Text', text: /^0s$/ })).toBeDefined()
-    expect(await ui.find({ type: 'Text', text: /Working on your request/ })).toBeDefined()
+    // The turn's title, then the main agent in lines: its head, its status line, its bar and the one line that says it works.
+    expect(await paneLines(ui)).toEqual([
+      '● Current run · 0s',
+      '______________________________',
+      '',
+      'Build my landing page',
+      '',
+      '● Main agent',
+      '  Working · 0s',
+      '  ███░░░░░░░',
+      '  ▶ Working on your request',
+      '',
+      'History',
+      '______________________________',
+      '',
+      'No finished turns yet'
+    ])
     await ui.unmount()
   }
 
@@ -589,7 +635,8 @@ test('a turn shows its title, its time and the working line in the pane, on both
 
   const ui = await paneView($)
 
-  expect(await ui.find({ type: 'Text', text: /^2m 35s$/ })).toBeDefined()
+  expect((await paneLines(ui))[0]).toBe('● Current run · 2m 35s')
+  expect((await paneLines(ui))[6]).toBe('  Working · 2m 35s')
   await ui.unmount()
 })
 
@@ -669,11 +716,17 @@ test('TodoWrite appears as the checklist in the pane, and the call goes through 
   expect(await ui.find({ type: 'Text', text: /^✓$/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /^▶$/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /^○$/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^██████████$/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^░░░░░░░░░░$/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^Done\s*$/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^Working\s*$/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^Next\s*$/ })).toBeDefined()
+  // A task is its mark and its name: no bar of its own and no label of its status (the only bar is the main agent's, in its own line).
+  expect(await ui.findAll({ type: 'Text', text: /[█░]/ })).toHaveLength(1)
+  expect(await ui.find({ type: 'Text', text: /^(Done|Next)\s*$/ })).toBeUndefined()
+  expect((await paneLines(ui)).slice(5, 11)).toEqual([
+    '● Main agent',
+    '  Working · 1/3 · 0s',
+    '  ███░░░░░░░',
+    '  ✓ Analyze project structure',
+    '  ▶ Implement authentication',
+    '  ○ Run final tests'
+  ])
   // The real list replaces the one line that said nothing.
   expect(await ui.find({ type: 'Text', text: /Working on your request/ })).toBeUndefined()
 
@@ -707,15 +760,16 @@ test('TaskCreate and TaskUpdate build and move the checklist; the id comes from 
 
   expect(await ui.find({ type: 'Text', text: /^Write the parser$/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /^Test the parser$/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^Next\s*$/ })).toBeDefined()
+  expect(await ui.findAll({ type: 'Text', text: /^○$/ })).toHaveLength(2)
   expect(await ui.find({ type: 'Text', text: /Working on your request/ })).toBeUndefined()
 
   await $.tool.call({ tool: 'TaskUpdate', taskId: 'id-1', status: 'in_progress' })
   expect((await ui.find({ type: 'Text', text: /^Write the parser$/ }))?.props?.bold).toBe(true)
+  expect(await ui.find({ type: 'Text', text: /^▶$/ })).toBeDefined()
 
   await $.tool.call({ tool: 'TaskUpdate', taskId: 'id-1', status: 'completed', subject: 'Parser written' })
   expect(await ui.find({ type: 'Text', text: /^Parser written$/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^Done\s*$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^✓$/ })).toBeDefined()
 
   await $.tool.call({ tool: 'TaskUpdate', taskId: 'id-2', status: 'deleted' })
   expect(await ui.find({ type: 'Text', text: /^Test the parser$/ })).toBeUndefined()
@@ -762,19 +816,23 @@ test('a turn that ends is archived: the pane says it is ready and the history ha
   expect(await ui.find({ type: 'Text', text: /^Current run$/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /^All done, ready for more instructions$/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /^Implement$/ })).toBeUndefined()
-  // The group: title, final state and duration; the main agent with its tasks done.
-  expect(await ui.find({ type: 'Text', text: /^ · 1 run$/ })).toMatchObject({ props: { dimColor: true } })
   // The count is dim, right after the title and not at the right edge.
-  expect(await ui.find({ type: 'Text', text: /^Build my landing page$/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^Done$/ })).toBeDefined()
-  expect(await ui.findAll({ type: 'Text', text: /^3m 10s$/ })).toHaveLength(2)
-  expect(await ui.find({ type: 'Text', text: /^Main agent$/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^1\/2$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^ · 1 run$/ })).toMatchObject({ props: { dimColor: true } })
   expect(await ui.find({ type: 'Text', text: /^No finished turns yet$/ })).toBeUndefined()
+  // The group: the title, its final state and duration, and the main agent two levels in, with its tasks done; no bar, no checklist.
+  const group = [
+    '✓ Build my landing page',
+    '  Done · 3m 10s',
+    '    ✓ Main agent',
+    '      Done · 1/2 · 3m 10s'
+  ]
+
+  expect((await paneLines(ui)).slice(-4)).toEqual(group)
+  expect(await ui.find({ type: 'Text', text: /[█░]/ })).toBeUndefined()
 
   // The time is frozen at the end, however long it takes.
   await clock.advance(60 * MS)
-  expect(await ui.findAll({ type: 'Text', text: /^3m 10s$/ })).toHaveLength(2)
+  expect((await paneLines(ui)).slice(-4)).toEqual(group)
   await ui.unmount()
 })
 
@@ -793,8 +851,9 @@ test('a stopped, failed or refused turn goes to the history with its final state
   const ui = await paneView($)
 
   expect(await ui.find({ type: 'Text', text: /^ · 3 runs$/ })).toBeDefined()
-  expect(await ui.findAll({ type: 'Text', text: /^Failed$/ })).toHaveLength(2)
-  expect(await ui.findAll({ type: 'Text', text: /^Stopped$/ })).toHaveLength(1)
+  // Each turn's state, and its main agent's, in the colour of its end; the marks are the turn's and the main agent's.
+  expect(await ui.findAll({ type: 'Text', text: /^Failed$/ })).toHaveLength(4)
+  expect(await ui.findAll({ type: 'Text', text: /^Stopped$/ })).toHaveLength(2)
   expect(await ui.findAll({ type: 'Text', text: /^✗$/ })).toHaveLength(4)
   expect(await ui.findAll({ type: 'Text', text: /^■$/ })).toHaveLength(2)
 
@@ -900,7 +959,7 @@ test('turn events pass through with their answer as it is', async ($, on) => {
   expect(await finish($)).toEqual({ text: 'done' })
 })
 
-test('with little width the pane drops the bars and cuts the names to fit', async ($, on) => {
+test('with little width the pane keeps its lines and the agent bar, and cuts the names to fit', async ($, on) => {
   radar(on)
   on('tool.call', () => answered({ oldTodos: [], newTodos: [] }))
 
@@ -910,20 +969,23 @@ test('with little width the pane drops the bars and cuts the names to fit', asyn
     todos: todos(['Implement a very long authentication flow with tokens', 'in_progress'], ['Next thing', 'pending'])
   })
 
-  const narrow = await paneView($, 30)
+  const lines = async (columns: number) => {
+    const ui = await paneView($, columns)
+    const seen = { lines: await paneLines(ui), name: await ui.find({ type: 'Text', text: /Implement a very/ }) }
 
-  expect(await narrow.find({ type: 'Text', text: /[█░]/ })).toBeUndefined()
-  expect(await narrow.find({ type: 'Text', text: /^Working\s*$/ })).toBeDefined()
+    await ui.unmount()
 
-  const name = await narrow.find({ type: 'Text', text: /Implement a very/ })
+    return seen
+  }
 
-  expect(name?.props?.wrap).toBe('truncate-end')
-  await narrow.unmount()
+  // The same lines at any width: nothing is dropped (no thresholds), the text of a name is cut by its own `truncate-end`.
+  const narrow = await lines(30)
+  const wide = await lines(60)
 
-  const wide = await paneView($, 60)
-
-  expect(await wide.find({ type: 'Text', text: /[█░]{10}/ })).toBeDefined()
-  await wide.unmount()
+  expect(withoutRules(narrow.lines)).toEqual(withoutRules(wide.lines))
+  expect(narrow.lines).toContain('  ███░░░░░░░')
+  expect(narrow.lines).toContain('  Working · 0/2 · 0s')
+  expect(narrow.name?.props?.wrap).toBe('truncate-end')
 })
 
 test('OFF leaves the band with the name and the ON/OFF button, keeps the state, and ON brings it back to the pane', async ($, on) => {
@@ -962,7 +1024,7 @@ test('while OFF the timer does not run, and ON with the pane opened in the middl
 
   const pane = await paneView($)
 
-  expect(await pane.find({ type: 'Text', text: /^10s$/ })).toBeDefined()
+  expect(await paneLines(pane)).toContain('  Working · 10s')
   expect(await pane.find({ type: 'Text', text: /^███░░░░░░░$/ })).toBeDefined()
 
   await clock.advance(250)
@@ -986,7 +1048,7 @@ test('a turn that finished while OFF is in the history as it ended when it is ba
   const pane = await paneView($)
 
   expect(await pane.find({ type: 'Text', text: /^Done$/ })).toBeDefined()
-  expect(await pane.find({ type: 'Text', text: /^30s$/ })).toBeUndefined()
+  expect((await paneLines(pane)).join('\n')).not.toMatch(/30s/)
   expect(await pane.find({ type: 'Text', text: /^Build my landing page$/ })).toBeDefined()
   await pane.unmount()
   await ui.unmount()
@@ -1274,7 +1336,7 @@ const spawn = ($: any, subagentType: string, description = 'Building login compo
 /** The subagents are drawn in the pane. */
 const mount = ($: any, bodyColumns = 60) => paneView($, bodyColumns)
 
-test('a spawn goes through untouched and the subagent shows in the pane with its name, time, task and state', async ($, on) => {
+test('a spawn goes through untouched and the subagent shows in the pane in lines: its head, its task, its status with the time and its bar', async ($, on) => {
   const clock = squad(on, 'a1')
 
   await begin($)
@@ -1287,18 +1349,33 @@ test('a spawn goes through untouched and the subagent shows in the pane with its
 
   const ui = await mount($)
 
-  expect(await ui.find({ type: 'Text', text: /^frontend-developer$/ })).toBeDefined()
-  // The main agent's time and the subagent's; the turn's is in the heading, with its label.
-  expect(await ui.findAll({ type: 'Text', text: /^1m 20s$/ })).toHaveLength(2)
-  expect(await ui.find({ type: 'Text', text: /^ · 1m 20s$/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^Building login components$/ })).toBeDefined()
-  // The main agent's status, the checklist's line, the subagent's activity and its status.
-  expect(await ui.findAll({ type: 'Text', text: /^Working$/ })).toHaveLength(4)
-  // The heading's mark, the main agent's and the subagent's.
-  expect(await ui.findAll({ type: 'Text', text: /^●$/ })).toHaveLength(3)
-  // The block of the subagents counts the ones at work.
+  // The main agent, then, a blank row apart, the block of the subagents with the ones at work counted; each one is two columns in, in its own lines.
+  expect(await paneLines(ui)).toEqual([
+    '● Current run · 1m 20s',
+    '______________________________',
+    '',
+    'Build my landing page',
+    '',
+    '● Main agent',
+    '  Working · 1m 20s',
+    '  ███░░░░░░░',
+    '  ▶ Working on your request',
+    '',
+    'Subagents · 1 active',
+    '  ● frontend-developer · m',
+    '    Building login components',
+    '    Working · 1m 20s',
+    '    ███░░░░░░░',
+    '',
+    'History',
+    '______________________________',
+    '',
+    'No finished turns yet'
+  ])
   expect(await ui.find({ type: 'Text', text: /^Subagents$/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^1 active$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^ · 1 active$/ })).toBeDefined()
+  // No line of an agent is its own activity while none is known (the status says Working already).
+  expect(await ui.findAll({ type: 'Text', text: /^Working$/ })).toHaveLength(2)
   await ui.unmount()
 })
 
@@ -1326,17 +1403,33 @@ test('two parallel subagents with the same name are kept apart', async ($, on) =
   const ui = await mount($)
 
   expect(await ui.findAll({ type: 'Text', text: /^code-reviewer$/ })).toHaveLength(2)
-  expect(await ui.find({ type: 'Text', text: /^Reviewing the auth module$/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^Reviewing the billing module$/ })).toBeDefined()
-  // The main agent's time and the first subagent's.
-  expect(await ui.findAll({ type: 'Text', text: /^30s$/ })).toHaveLength(2)
-  expect(await ui.find({ type: 'Text', text: /^0s$/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^2 active$/ })).toBeDefined()
+  // Each with its own task, time and bar, a blank row between them.
+  expect(blockOf(await paneLines(ui), /^Subagents/, 10)).toEqual([
+    'Subagents · 2 active',
+    '  ● code-reviewer · m',
+    '    Reviewing the auth module',
+    '    Working · 30s',
+    '    ███░░░░░░░',
+    '',
+    '  ● code-reviewer · m',
+    '    Reviewing the billing module',
+    '    Working · 0s',
+    '    ███░░░░░░░'
+  ])
 
-  // Finishing one leaves the other working; the finished one stays in the run, done.
+  // Finishing one leaves the other working; the finished one stays in the run, done, with its time frozen and no bar.
   await finish($, 'answer', 'a1')
-  expect(await ui.findAll({ type: 'Text', text: /^Done$/ })).toHaveLength(1)
-  expect(await ui.find({ type: 'Text', text: /^1 active$/ })).toBeDefined()
+  expect(blockOf(await paneLines(ui), /^Subagents/, 9)).toEqual([
+    'Subagents · 1 active',
+    '  ✓ code-reviewer · m',
+    '    Reviewing the auth module',
+    '    Done · 30s',
+    '',
+    '  ● code-reviewer · m',
+    '    Reviewing the billing module',
+    '    Working · 0s',
+    '    ███░░░░░░░'
+  ])
   expect(await ui.findAll({ type: 'Text', text: /^code-reviewer$/ })).toHaveLength(2)
   await ui.unmount()
 })
@@ -1350,15 +1443,36 @@ test('the activity follows the tools of that subagent only', async ($, on) => {
 
   const ui = await mount($)
 
-  // The main agent's status and the checklist's line, and the activity and status of each subagent.
-  expect(await ui.findAll({ type: 'Text', text: /^Working$/ })).toHaveLength(2 + 4)
+  // No subagent has made a call yet: none has an activity line, only its task, status and bar.
+  expect(blockOf(await paneLines(ui), /^Subagents/, 10)).toEqual([
+    'Subagents · 2 active',
+    '  ● one · m',
+    '    Task one',
+    '    Working · 0s',
+    '    ███░░░░░░░',
+    '',
+    '  ● two · m',
+    '    Task two',
+    '    Working · 0s',
+    '    ███░░░░░░░'
+  ])
 
+  // The activity goes under the task of the one that called, and only of it.
   await $.tool.call({ tool: 'Read', file_path: '/secret/file.ts', agentId: 'a1' } as never)
   expect(await ui.findAll({ type: 'Text', text: /^Reading project files$/ })).toHaveLength(1)
-  expect(await ui.find({ type: 'Text', text: /^Task one$/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^Task two$/ })).toBeDefined()
-  // The main turn's two, both statuses, and the activity of the other subagent, which has none of its own yet.
-  expect(await ui.findAll({ type: 'Text', text: /^Working$/ })).toHaveLength(2 + 2 + 1)
+  expect(blockOf(await paneLines(ui), /^Subagents/, 11)).toEqual([
+    'Subagents · 2 active',
+    '  ● one · m',
+    '    Task one',
+    '    Reading project files',
+    '    Working · 0s',
+    '    ███░░░░░░░',
+    '',
+    '  ● two · m',
+    '    Task two',
+    '    Working · 0s',
+    '    ███░░░░░░░'
+  ])
 
   await $.tool.call({ tool: 'Bash', command: 'npm test -- /secret/dir', agentId: 'a1' } as never)
   expect(await ui.find({ type: 'Text', text: /^Running tests$/ })).toBeDefined()
@@ -1401,25 +1515,32 @@ test('a subagent that ends keeps its time frozen in the run, and in the turn gro
   expect(await ui.find({ type: 'Text', text: /No finished turns yet/ })).toBeDefined()
 
   await finish($, 'answer', 'a1')
-  // Still in the run, done; the main agent works on, so the turn is open.
-  expect(await ui.find({ type: 'Text', text: /^✓$/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^frontend-developer$/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^Done$/ })).toBeDefined()
+  // Still in the run, done, with its time frozen and no bar of its own; the main agent works on, so the turn is open and has the one bar left.
+  expect(blockOf(await paneLines(ui), /^Subagents/, 4)).toEqual([
+    'Subagents · 0 active',
+    '  ✓ frontend-developer · m',
+    '    Building login components',
+    '    Done · 1m 05s'
+  ])
+  expect(await ui.findAll({ type: 'Text', text: /[█░]/ })).toHaveLength(1)
   expect(await ui.find({ type: 'Text', text: /No finished turns yet/ })).toBeDefined()
 
-  // The main agent's time and the subagent's.
-  expect(await ui.findAll({ type: 'Text', text: /^1m 05s$/ })).toHaveLength(2)
   await clock.advance(30 * MS)
 
-  // The main agent ends: the turn goes to the history with the subagent's final state, task and time.
+  // The main agent ends: the turn goes to the history with the subagent's final state, task and time, and no bar is left anywhere.
   await finish($)
   expect(await ui.find({ type: 'Text', text: /No finished turns yet/ })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: /^All done, ready for more instructions$/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^frontend-developer$/ })).toBeDefined()
-  // Its task under its name and its final state in its row, next to the group's own.
-  expect(await ui.find({ type: 'Text', text: /^Building login components$/ })).toBeDefined()
-  expect(await ui.findAll({ type: 'Text', text: /^Done$/ })).toHaveLength(2)
-  expect(await ui.findAll({ type: 'Text', text: /^1m 05s$/ })).toHaveLength(1)
+  expect((await paneLines(ui)).slice(-7)).toEqual([
+    '✓ Build my landing page',
+    '  Done · 1m 35s',
+    '    ✓ Main agent',
+    '      Done · 1m 35s',
+    '    ✓ frontend-developer · m',
+    '      Building login components',
+    '      Done · 1m 05s'
+  ])
+  expect(await ui.find({ type: 'Text', text: /[█░]/ })).toBeUndefined()
   await ui.unmount()
 })
 
@@ -1479,16 +1600,18 @@ test('the main turn ending does not close the subagents, nor they it: a subagent
   // The subagent still works, the main agent's own status is Done, and the heading's mark is still running.
   expect(await ui.find({ type: 'Text', text: /^Working$/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /^Done$/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^1 active$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^ · 1 active$/ })).toBeDefined()
+  // The main agent has no bar any more (it is done); the subagent's is the only one.
+  expect(await ui.findAll({ type: 'Text', text: /[█░]/ })).toHaveLength(1)
   expect(await ui.find({ type: 'Text', text: /ready for more/ })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: /No finished turns yet/ })).toBeDefined()
 
-  // Then it finishes: the turn is archived, with the main agent's end and the subagent's.
+  // Then it finishes: the turn is archived, with the main agent's end and the subagent's (and the turn's own state).
   await finish($, 'answer', 'a1')
   expect(await ui.find({ type: 'Text', text: /^All done, ready for more instructions$/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /No finished turns yet/ })).toBeUndefined()
-  expect(await ui.find({ type: 'Text', text: /^1 active$/ })).toBeUndefined()
-  expect(await ui.findAll({ type: 'Text', text: /^Done$/ })).toHaveLength(2)
+  expect(await ui.find({ type: 'Text', text: /^ · 1 active$/ })).toBeUndefined()
+  expect(await ui.findAll({ type: 'Text', text: /^Done$/ })).toHaveLength(3)
   expect(await ui.find({ type: 'Text', text: /^Building login components$/ })).toBeDefined()
   await ui.unmount()
 })
@@ -1527,27 +1650,60 @@ test('OFF keeps the subagents in the state, and ON brings them back to the pane'
   await pane.unmount()
 })
 
-test('with little width the subagent rows lose the status column and are cut with an ellipsis', async ($, on) => {
+test('a narrow pane keeps every line of a subagent and cuts its name and task with an ellipsis', async ($, on) => {
   squad(on, 'a1')
 
   await begin($)
   await spawn($, 'a-very-long-custom-agent-name-for-the-frontend', 'A long delegated task that goes on and on')
 
-  const narrow = await mount($, 30)
-
-  // The checklist's line and the activity; the statuses join them only when they fit.
-  expect(await narrow.findAll({ type: 'Text', text: /^Working$/ })).toHaveLength(2)
-
-  for (const text of await narrow.findAll({ type: 'Text', text: /agent-name|delegated/ })) {
-    expect(text.props?.wrap).toBe('truncate-end')
-  }
-  await narrow.unmount()
-
   const wide = await mount($, 60)
+  const lines = await paneLines(wide)
 
-  // Plus the main agent's status and the subagent's.
-  expect(await wide.findAll({ type: 'Text', text: /^Working$/ })).toHaveLength(4)
   await wide.unmount()
+
+  for (const columns of [24, 40]) {
+    const narrow = await mount($, columns)
+
+    // The same lines at every width: no field is dropped, the name, the model and the task are cut by the text itself.
+    expect(withoutRules(await paneLines(narrow))).toEqual(withoutRules(lines))
+    expect(blockOf(lines, /^Subagents/, 6)).toEqual([
+      'Subagents · 1 active',
+      '  ● a-very-long-custom-agent-name-for-the-frontend · m',
+      '    A long delegated task that goes on and on',
+      '    Working · 0s',
+      '    ███░░░░░░░',
+      ''
+    ])
+
+    for (const text of await narrow.findAll({ type: 'Text', text: /agent-name|delegated/ })) {
+      expect(text.props?.wrap).toBe('truncate-end')
+    }
+
+    // The name gives way first: its cell shrinks and the cell of the model and effort does not.
+    const cells = (await narrow.findAll({ type: 'Box' })) as { props?: { flexShrink?: number; marginLeft?: number }; text: string }[]
+
+    expect(cells.filter(cell => cell.props?.flexShrink === 1 && cell.text === 'a-very-long-custom-agent-name-for-the-frontend')).toHaveLength(1)
+    expect(cells.filter(cell => cell.props?.flexShrink === 0 && cell.props.marginLeft === 1).map(cell => cell.text)).toEqual(['· m'])
+    await expectFits(narrow, columns)
+    await narrow.unmount()
+  }
+})
+
+test('a subagent that waits for the person keeps its one bar, in yellow, under its Needs you status', async ($, on) => {
+  squad(on, 'a1')
+  on('tool.check', () => ({ decision: 'ask' }) as never)
+
+  await begin($)
+  await spawn($, 'one', 'Task one')
+  await $.tool.check({ tool: 'Bash', input: { command: 'rm x' }, agentId: 'a1' } as never)
+
+  const ui = await mount($)
+
+  expect(blockOf(await paneLines(ui), /^Subagents/, 5)).toEqual(['Subagents · 1 active', '  ● one · m', '    Task one', '    Needs you · 0s', '    ███░░░░░░░'])
+  // The main agent's bar is blue (it works) and the subagent's yellow; the status word has the same yellow.
+  expect((await ui.findAll({ type: 'Text', text: /[█░]/ })).map((bar: { props?: { color?: string } }) => bar.props?.color)).toEqual(['#38bdf8', '#facc15'])
+  expect((await ui.find({ type: 'Text', text: /^Needs you$/ }))?.props?.color).toBe('#facc15')
+  await ui.unmount()
 })
 
 test('a nested subagent shows under its parent only when the spawn names a parent that is listed', async ($, on) => {
@@ -1591,13 +1747,15 @@ test('with settings.language in Spanish the band and the pane speak Spanish, nam
 
   const pane = await paneView($)
 
-  for (const text of [/^Ejecución actual$/, /^Trabajando$/, /^Hecho\s*$/, /^En curso\s*$/, /^Siguiente\s*$/, /^Agente principal$/, /^Historial( \(\d+ ejecuci(ón|ones)\))?$/]) {
+  for (const text of [/^Ejecución actual$/, /^Trabajando$/, /^Agente principal$/, /^Historial( \(\d+ ejecuci(ón|ones)\))?$/]) {
     expect(await pane.find({ type: 'Text', text })).toBeDefined()
   }
   // The heading's total time and the block of the subagents, with the one still at work.
-  for (const text of [/^ · /, /^Subagentes$/, /^1 activo$/]) {
+  for (const text of [/^ · /, /^Subagentes$/, /^ · 1 activo$/]) {
     expect(await pane.find({ type: 'Text', text })).toBeDefined()
   }
+  // The checklist has no label of its status, in any language: the mark and the name.
+  expect(await pane.find({ type: 'Text', text: /^(Hecho|En curso|Siguiente)\s*$/ })).toBeUndefined()
   expect(await pane.find({ type: 'Text', text: /^Leyendo archivos del proyecto$/ })).toBeDefined()
   expect(await pane.find({ type: 'Text', text: /^Falló$/ })).toBeDefined()
   expect(await pane.find({ type: 'Text', text: /^Aún no hay turnos terminados$/ })).toBeDefined()
@@ -1618,11 +1776,12 @@ test('with settings.language in Spanish the band and the pane speak Spanish, nam
 
   expect(await archived.find({ type: 'Text', text: /^Todo listo, esperando instrucciones$/ })).toBeDefined()
   expect(await archived.find({ type: 'Text', text: /^ · 1 ejecución$/ })).toBeDefined()
-  expect(await archived.findAll({ type: 'Text', text: /^Hecho$/ })).toHaveLength(2)
+  // The state of the turn, of the main agent and of the subagent that answered; the other one failed.
+  expect(await archived.findAll({ type: 'Text', text: /^Hecho$/ })).toHaveLength(3)
   expect(await archived.findAll({ type: 'Text', text: /^Falló$/ })).toHaveLength(1)
   expect(await archived.find({ type: 'Text', text: /^Reviewing the diff$/ })).toBeDefined()
   expect(await archived.find({ type: 'Text', text: /^Building login components$/ })).toBeDefined()
-  expect(await archived.find({ type: 'Text', text: /^1\/3$/ })).toBeDefined()
+  expect(await paneLines(archived)).toContain('      Hecho · 1/3 · 0s')
   expect(await archived.find({ type: 'Text', text: /ready|Main agent|Done|Failed/ })).toBeUndefined()
   await archived.unmount()
 })
@@ -1681,7 +1840,7 @@ test('a task with no valid text is named in the language when drawn', async ($, 
   await english.unmount()
 
   // The state keeps no phrase: the same task reads in the other language too.
-  expect(rowsOf(writeTodos(startTurn(initialState(), 'go', 0), [{ content: '/only/a/path', status: 'pending' }]).checklist, 0, es)[0]?.name).toBe('En ello')
+  expect(rowsOf(writeTodos(startTurn(initialState(), 'go', 0), [{ content: '/only/a/path', status: 'pending' }]).checklist, es)[0]?.name).toBe('En ello')
 })
 
 test('the activities are put in Spanish: every one the tools can say', async () => {
@@ -1693,8 +1852,9 @@ test('the activities are put in Spanish: every one the tools can say', async () 
   expect(agentsOf(state('testing'), 1, es)[0]?.activity).toBe('Ejecutando pruebas')
   expect(agentsOf(state('command'), 1, es)[0]?.activity).toBe('Ejecutando un comando')
   expect(agentsOf(state('delegating'), 1, es)[0]?.activity).toBe('Delegando trabajo')
-  expect(agentsOf(state(null), 1, es)[0]?.activity).toBe('Trabajando')
-  expect(agentsOf(state(null), 1, en)[0]?.activity).toBe('Working')
+  // None known yet: the pane has no line for it.
+  expect(agentsOf(state(null), 1, es)[0]?.activity).toBeNull()
+  expect(agentsOf(state(null), 1, en)[0]?.activity).toBeNull()
   // The same state, two languages.
   expect(agentsOf(state('testing'), 1, en)[0]?.activity).toBe('Running tests')
 })
@@ -2253,15 +2413,20 @@ test('the timer stops when nothing is left to move', async ($, on) => {
   await opener.unmount()
 })
 
-test('a subagent with no task and no tool seen shows Working', async ($, on) => {
+test('a subagent with no task and no tool seen has only its head, its status and its bar', async ($, on) => {
   squad(on, 'a1')
   await begin($)
   await spawn($, 'Explore', '')
 
   const ui = await mount($)
 
-  expect(await ui.find({ type: 'Text', text: /^Explore$/ })).toBeDefined()
-  expect(await ui.findAll({ type: 'Text', text: /^Working$/ })).toHaveLength(4)
+  expect(blockOf(await paneLines(ui), /^Subagents/, 5)).toEqual([
+    'Subagents · 1 active',
+    '  ● Explore · m',
+    '    Working · 0s',
+    '    ███░░░░░░░',
+    ''
+  ])
   await ui.unmount()
 })
 
@@ -2429,7 +2594,7 @@ test('a session that ends is cleared, the archived turns too, and only the ON/OF
   expect(fresh.turns).toEqual([])
 })
 
-test('the pane rows read the status: mark, label, bar, activity (or Working) and whole task', async () => {
+test('the pane rows read the status: mark, label, bar, activity (none until a tool is seen) and whole task', async () => {
   const row = (state: ReturnType<typeof initialState>) => {
     const agent = agentsOf(state, 80_000)[0]!
 
@@ -2437,13 +2602,13 @@ test('the pane rows read the status: mark, label, bar, activity (or Working) and
   }
   const base = spawned(initialState(), 'a1', 'x', 0)
 
-  // At work or waiting the bar moves; once it ended it is full. The radar never invents a percentage.
-  expect(row(base)).toBe('● Working | Working | 1m 20s | ███░░░░░░░')
+  // At work or waiting the bar moves; once it ended there is none. The radar never invents a percentage.
+  expect(row(base)).toBe('● Working | null | 1m 20s | ███░░░░░░░')
   expect(row(workSubagent(base, 'a1', 'reading'))).toBe('● Working | Reading project files | 1m 20s | ███░░░░░░░')
-  expect(row(askSubagent(base, 'a1'))).toBe('● Needs you | Working | 1m 20s | ███░░░░░░░')
-  expect(row(finishSubagent(base, 'a1', 'answer', 5000))).toBe('✓ Done | Working | 5s | ██████████')
-  expect(row(finishSubagent(base, 'a1', 'error', 5000))).toBe('✗ Failed | Working | 5s | ██████████')
-  expect(row(finishSubagent(base, 'a1', 'aborted', 5000))).toBe('■ Stopped | Working | 5s | ██████████')
+  expect(row(askSubagent(base, 'a1'))).toBe('● Needs you | null | 1m 20s | ███░░░░░░░')
+  expect(row(finishSubagent(base, 'a1', 'answer', 5000))).toBe('✓ Done | null | 5s | null')
+  expect(row(finishSubagent(base, 'a1', 'error', 5000))).toBe('✗ Failed | null | 5s | null')
+  expect(row(finishSubagent(base, 'a1', 'aborted', 5000))).toBe('■ Stopped | null | 5s | null')
   expect(paneOf(startTurn(base, 'go', 0), 1, 3).current?.agents[0]?.bar).toBe(bar(null, 3))
   // The task shows whole, tidied of paths and code, and none when there is none.
   expect(agentsOf(spawned(initialState(), 'a1', 'x', 0, { task: 'Fix `foo()` in /src/a.ts please' }), 1)[0]?.task).toBe('Fix in please')
@@ -2488,12 +2653,13 @@ test('the pane view has the current run (main agent, checklist, subagents with t
   expect(current.tasks.map(row => row.name)).toEqual(['Analyze', 'Implement'])
   // Every subagent of the turn, at work or finished, the child under its parent.
   expect(current.agents.map(agent => [agent.name, agent.depth, agent.status, agent.activity])).toEqual([
-    ['lead', 0, 'working', 'Working'],
+    ['lead', 0, 'working', null],
     ['helper', 1, 'working', 'Running tests'],
-    ['reviewer', 0, 'done', 'Working']
+    ['reviewer', 0, 'done', null]
   ])
   expect(current.agents.map(agent => agent.detail)).toEqual(['haiku', null, null])
-  expect(current.agents.map(agent => agent.bar)).toEqual(['███░░░░░░░', '███░░░░░░░', '██████████'])
+  // One bar per agent at work; the one that finished has none.
+  expect(current.agents.map(agent => agent.bar)).toEqual(['███░░░░░░░', '███░░░░░░░', null])
   // The whole task, tidied and not cut at 40.
   expect(current.agents[0]?.task).toBe('Review the login flow in and the refresh token handling of the session store')
   expect(current.agents[0]!.task!.length).toBeGreaterThan(40)
@@ -2540,7 +2706,7 @@ test('the turn is still working while a subagent works after the main agent ende
 
   // The main agent is done; the turn is not, and its time keeps running.
   expect(current).toMatchObject({ tone: 'working', time: '5s', mark: '●', isRunning: true, active: 1 })
-  expect(current.leader).toMatchObject({ status: 'done', label: 'Done', time: '1s', bar: '██████████' })
+  expect(current.leader).toMatchObject({ status: 'done', label: 'Done', time: '1s', bar: null })
   expect(paneOf(askSubagent(state, 'a1'), 5000, 0).current).toMatchObject({ reason: 'Waiting for your permission', tone: 'needsYou', active: 1 })
 })
 
@@ -2650,7 +2816,7 @@ test('the pane says there is nothing running yet when there is nothing', async (
   await ui.unmount()
 })
 
-test('the pane draws the turn, the whole checklist, the subagents at work and the history', async ($, on) => {
+test('the pane draws the turn, the whole checklist, the subagents at work and the history, each agent in its own lines', async ($, on) => {
   const clock = squad(on, 'a1', 'a2', 'a3')
 
   await begin($)
@@ -2667,26 +2833,40 @@ test('the pane draws the turn, the whole checklist, the subagents at work and th
 
   const ui = await paneView($)
 
-  expect(await ui.find({ type: 'Text', text: /^Current run$/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^Build my landing page$/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^Main agent$/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^1\/3$/ })).toBeDefined()
-  for (const name of [/^Analyze project structure$/, /^Implement authentication$/, /^Run final tests$/]) {
-    expect(await ui.find({ type: 'Text', text: name })).toBeDefined()
-  }
-  expect(await ui.find({ type: 'Text', text: /^██████████$/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^░░░░░░░░░░$/ })).toBeDefined()
-
-  // The subagents of the turn: the finished one stays in the run, with its final state.
-  expect(await ui.find({ type: 'Text', text: /^frontend-developer$/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^backend-developer$/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^code-reviewer$/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^Building the login components$/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^Reading project files$/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^Reviewing the diff$/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^Failed$/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^✗$/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^45s$/ })).toBeDefined()
+  // The main agent with its checklist (a mark and a name per task), then the subagents of the turn: the one at work with its task, activity, status and bar,
+  // the child two columns further in under its parent, and the finished one, which stays in the run with its final state and no bar. A blank row between agents.
+  expect((await paneLines(ui)).slice(0, 28)).toEqual([
+    '● Current run · 45s',
+    '______________________________',
+    '',
+    'Build my landing page',
+    '',
+    '● Main agent',
+    '  Working · 1/3 · 45s',
+    '  ███░░░░░░░',
+    '  ✓ Analyze project structure',
+    '  ▶ Implement authentication',
+    '  ○ Run final tests',
+    '',
+    'Subagents · 2 active',
+    '  ● frontend-developer · m',
+    '    Building the login components',
+    '    Reading project files',
+    '    Working · 45s',
+    '    ███░░░░░░░',
+    '',
+    '    ● backend-developer · m',
+    '      Reviewing authentication routes',
+    '      Working · 45s',
+    '      ███░░░░░░░',
+    '',
+    '  ✗ code-reviewer · m',
+    '    Reviewing the diff',
+    '    Failed · 45s',
+    ''
+  ])
+  // One bar for the main agent and one for each subagent at work; none for the checklist or for the one that failed.
+  expect(await ui.findAll({ type: 'Text', text: /[█░]/ })).toHaveLength(3)
   expect(await ui.find({ type: 'Text', text: /secret|\/src/ })).toBeUndefined()
   // The one under another is indented.
   expect(await ui.findAll({ type: 'Box', props: { paddingLeft: 2 } } as never)).not.toHaveLength(0)
@@ -2698,6 +2878,7 @@ test('the pane draws the turn, the whole checklist, the subagents at work and th
   // However long it goes on, the finished one is still in the run.
   await clock.advance(10 * MS)
   expect(await ui.find({ type: 'Text', text: /^code-reviewer$/ })).toBeDefined()
+  expect((await paneLines(ui)).slice(24, 27)).toEqual(['  ✗ code-reviewer · m', '    Reviewing the diff', '    Failed · 45s'])
   await ui.unmount()
 })
 
@@ -2759,7 +2940,7 @@ test('the pane draws both sections on both surfaces and in both languages, with 
   }
 })
 
-test('the history groups each turn: its title, final state and duration, the main agent and the subagents', async ($, on) => {
+test('the history groups each turn in lines: its title, final state and duration, the main agent and the subagents indented under it', async ($, on) => {
   const clock = squad(on, 'a1', 'a2')
 
   on('turn.step', async function* ($: any, e: any) {
@@ -2790,48 +2971,58 @@ test('the history groups each turn: its title, final state and duration, the mai
   expect(await ui.find({ type: 'Text', text: /^ · 2 runs$/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /^All done, ready for more instructions$/ })).toBeDefined()
 
-  // Most recent first.
-  const titles = (await ui.findAll({ type: 'Text', text: /^(Quick question|Build my landing page)$/ })).map((node: { text: string }) => node.text)
-
-  expect(titles).toEqual(['Build my landing page', 'Quick question'])
-  // The long turn: one minute (the header, the main agent and the first subagent), its main agent with model and tasks, and its two subagents in their final state.
-  expect(await ui.findAll({ type: 'Text', text: /^1m 00s$/ })).toHaveLength(3)
-  expect(await ui.find({ type: 'Text', text: /opus-4-5 · high/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^2\/3$/ })).toBeDefined()
-  // The subagents' tasks under their names, and their final state in their rows (the groups' own states are the other Done).
-  expect(await ui.find({ type: 'Text', text: /^Building the login components$/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^Reviewing the diff$/ })).toBeDefined()
-  expect(await ui.findAll({ type: 'Text', text: /^Done$/ })).toHaveLength(3)
-  expect(await ui.findAll({ type: 'Text', text: /^Failed$/ })).toHaveLength(1)
-  expect(await ui.find({ type: 'Text', text: /^45s$/ })).toBeDefined()
-  // The short one has the main agent alone: no subagent rows, no tasks.
-  expect(await ui.findAll({ type: 'Text', text: /^12s$/ })).toHaveLength(2)
-  expect(await ui.findAll({ type: 'Text', text: /^Main agent$/ })).toHaveLength(2)
-  expect(await ui.findAll({ type: 'Text', text: /^(frontend-developer|code-reviewer)$/ })).toHaveLength(2)
-  // Nothing of the archived turns' checklist is drawn.
+  // Most recent first. The turn: mark and title, then its state, time and (when there are) tokens, two columns in; the agents two columns further, each with its own lines.
+  expect(blockOf(await paneLines(ui), /^History/, 18)).toEqual([
+    'History · 2 runs',
+    '______________________________',
+    '',
+    '✓ Build my landing page',
+    '  Done · 1m 00s',
+    '    ✓ Main agent · opus-4-5 · high',
+    '      Done · 2/3 · 1m 00s',
+    '    ✓ frontend-developer · m',
+    '      Building the login components',
+    '      Done · 1m 00s',
+    '    ✗ code-reviewer · m',
+    '      Reviewing the diff',
+    '      Failed · 45s',
+    '',
+    '✓ Quick question',
+    '  Done · 12s',
+    '    ✓ Main agent',
+    '      Done · 12s'
+  ])
+  // No bar anywhere in the history, no activity line, and nothing of the archived turns' checklist.
+  expect(await ui.find({ type: 'Text', text: /[█░]/ })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: /^Analyze$/ })).toBeUndefined()
   await ui.unmount()
 })
 
-test('the pane fits its width: no bars when narrow, every name cut with an ellipsis and none wider than the body', async ($, on) => {
+test('the pane fits its width: every line is cut with an ellipsis, none is dropped and none is wider than the body', async ($, on) => {
   squad(on, 'a1')
   await begin($)
   await $.tool.call({ tool: 'TodoWrite', todos: todos(['Implement a very long authentication flow with tokens', 'in_progress']) })
   await spawn($, 'a-very-long-custom-agent-name-for-the-frontend', 'A long delegated task that goes on and on')
 
-  const narrow = await paneView($, 24)
-
-  expect(await narrow.find({ type: 'Text', text: /[█░]/ })).toBeUndefined()
-
-  for (const text of await narrow.findAll({ type: 'Text', text: /agent-name|authentication|delegated/ })) {
-    expect(text.props?.wrap).toBe('truncate-end')
-  }
-  await narrow.unmount()
-
   const wide = await paneView($, 80)
+  const lines = await paneLines(wide)
 
-  expect(await wide.find({ type: 'Text', text: /[█░]{10}/ })).toBeDefined()
+  // One bar for the main agent and one for the subagent, however wide the pane is.
+  expect(await wide.findAll({ type: 'Text', text: /[█░]{10}/ })).toHaveLength(2)
   await wide.unmount()
+
+  for (const columns of [24, 40]) {
+    const narrow = await paneView($, columns)
+
+    expect(withoutRules(await paneLines(narrow))).toEqual(withoutRules(lines))
+    expect(await narrow.findAll({ type: 'Text', text: /[█░]{10}/ })).toHaveLength(2)
+
+    for (const text of await narrow.findAll({ type: 'Text', text: /agent-name|authentication|delegated/ })) {
+      expect(text.props?.wrap).toBe('truncate-end')
+    }
+    await expectFits(narrow, columns)
+    await narrow.unmount()
+  }
 })
 
 test('the desktop surface draws the pane too, and it only reads: the state is as it was', async ($, on) => {
@@ -2855,7 +3046,8 @@ test('the desktop surface draws the pane too, and it only reads: the state is as
   const again = await mount($)
 
   expect(await again.find({ type: 'Text', text: /^frontend-developer$/ })).toBeDefined()
-  expect(await again.findAll({ type: 'Text', text: /^Working$/ })).toHaveLength(4)
+  // The main agent's status and the subagent's.
+  expect(await again.findAll({ type: 'Text', text: /^Working$/ })).toHaveLength(2)
   await again.unmount()
 })
 
@@ -2943,11 +3135,14 @@ test('the hook on turn.step records the model, the effort and the tokens of the 
 
   const view = await paneView($)
 
-  expect(await view.find({ type: 'Text', text: /opus-4-5 · high/ })).toBeDefined()
-  expect(await view.find({ type: 'Text', text: /haiku · low/ })).toBeDefined()
-  // 1 234 for each of the two agents: 2.5k in all (2 468).
-  expect(await view.findAll({ type: 'Text', text: /^1\.2k$/ })).toHaveLength(2)
-  expect(await view.find({ type: 'Text', text: /· 2\.5k tokens$/ })).toBeDefined()
+  const lines = await paneLines(view)
+
+  expect(lines).toContain('● Main agent · opus-4-5 · high')
+  expect(lines).toContain('  ● Explore · haiku · low')
+  // 1 234 for each of the two agents: 2.5k in all (2 468). The figures come with their unit, in the status line of each.
+  expect(lines).toContain('  Working · 0s · 1.2k tokens')
+  expect(lines).toContain('    Working · 0s · 1.2k tokens')
+  expect(lines[0]).toBe('● Current run · 0s · 2.5k tokens')
   await view.unmount()
 })
 
@@ -3166,10 +3361,13 @@ test('the hook on turn.step adds up the tokens of the main agent, of a subagent 
 
   // 230 for the main agent, 250 for the subagent: 480 in all.
   expect(await ui.find({ type: 'Text', text: /^ · 3m 36s · 480 tokens$/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^230$/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^250$/ })).toBeDefined()
+
+  const running = await paneLines(ui)
+
+  expect(running).toContain('  Done · 0s · 230 tokens')
+  expect(running).toContain('    Working · 3m 36s · 250 tokens')
   // The model and effort of the early request reached the subagent too.
-  expect(await ui.find({ type: 'Text', text: /opus-4-5 · high/ })).toBeDefined()
+  expect(running).toContain('  ● frontend-developer · opus-4-5 · high')
   await ui.unmount()
 
   // The subagent ends and the turn is archived with the same figures.
@@ -3177,9 +3375,15 @@ test('the hook on turn.step adds up the tokens of the main agent, of a subagent 
 
   const history = await paneView($)
 
-  expect(await history.find({ type: 'Text', text: /^480 tokens$/ })).toBeDefined()
-  expect(await history.find({ type: 'Text', text: /^230$/ })).toBeDefined()
-  expect(await history.find({ type: 'Text', text: /^250$/ })).toBeDefined()
+  expect(blockOf(await paneLines(history), /^✓ Build/, 7)).toEqual([
+    '✓ Build my landing page',
+    '  Done · 3m 36s · 480 tokens',
+    '    ✓ Main agent · opus-4-5 · high',
+    '      Done · 0s · 230 tokens',
+    '    ✓ frontend-developer · opus-4-5 · high',
+    '      Building login components',
+    '      Done · 3m 36s · 250 tokens'
+  ])
   await history.unmount()
 })
 
@@ -3208,7 +3412,7 @@ test('the main agent starts counting again with each turn, and a response with n
   expect(box.state.leaderTokens).toBeUndefined()
 })
 
-test('the pane draws the heading, the total time and tokens, the active count, the rows and the rules, on both surfaces and in both languages', async ($, on) => {
+test('the pane draws the heading, the total time and tokens, the active count and each agent in lines, on both surfaces and in both languages', async ($, on) => {
   const clock = squad(on, 'a1', 'a2', 'b1', 'b2')
   let language = 'English'
   let usage: object | null = null
@@ -3220,8 +3424,8 @@ test('the pane draws the heading, the total time and tokens, the active count, t
   })
 
   const words = {
-    English: { run: /^Current run$/, total: /^ · 3m 36s · 19\.9k tokens$/, subagents: /^Subagents$/, active: /^2 active$/, runs: /^ · 1 run$/, none: /^No finished turns yet$/, reading: /^Reading project files$/ },
-    Español: { run: /^Ejecución actual$/, total: /^ · 3m 36s · 19\.9k tokens$/, subagents: /^Subagentes$/, active: /^2 activos$/, runs: /^ · 1 ejecución$/, none: /^Aún no hay turnos terminados$/, reading: /^Leyendo archivos del proyecto$/ }
+    English: { run: 'Current run', main: 'Main agent', working: 'Working', done: 'Done', subagents: 'Subagents · 2 active', reading: 'Reading project files', runs: 'History · 1 run', none: 'No finished turns yet', request: 'Working on your request', history: 'History' },
+    Español: { run: 'Ejecución actual', main: 'Agente principal', working: 'Trabajando', done: 'Hecho', subagents: 'Subagentes · 2 activos', reading: 'Leyendo archivos del proyecto', runs: 'Historial · 1 ejecución', none: 'Aún no hay turnos terminados', request: 'Trabajando en tu petición', history: 'Historial' }
   }
 
   for (const [round, lang] of (['English', 'Español'] as const).entries()) {
@@ -3247,43 +3451,49 @@ test('the pane draws the heading, the total time and tokens, the active count, t
     for (const surface of ['terminal', 'desktop'] as const) {
       const ui = await paneView($, 60, surface)
 
-      // The heading: a green dot, the title at the left, the total time and tokens at the right.
+      // The heading: a green dot, the title, the total time and tokens after it.
       const mark = (await ui.findAll({ type: 'Text', text: /^●$/ }))[0]
 
       expect(mark?.props?.color).toBe('#22c55e')
       expect(mark?.props?.dimColor).not.toBe(true)
-      expect(await ui.find({ type: 'Text', text: w.run })).toBeDefined()
-      expect(await ui.find({ type: 'Text', text: w.total })).toBeDefined()
-      expect(await ui.find({ type: 'Text', text: /^Build my landing page$/ })).toBeDefined()
-      // The block of the subagents, with the ones at work counted at the right.
-      expect(await ui.find({ type: 'Text', text: w.subagents })).toBeDefined()
-      expect(await ui.find({ type: 'Text', text: w.active })).toBeDefined()
-      // The rows, each with its own tokens, short.
-      expect(await ui.find({ type: 'Text', text: /^230$/ })).toBeDefined()
-      expect(await ui.find({ type: 'Text', text: /^1\.2k$/ })).toBeDefined()
-      expect(await ui.find({ type: 'Text', text: /^18\.4k$/ })).toBeDefined()
-      // The task of a subagent and its activity, each in its own line; the child is indented under its parent.
-      expect(await ui.find({ type: 'Text', text: /^Building the login components$/ })).toBeDefined()
-      expect(await ui.find({ type: 'Text', text: /^Reviewing authentication routes$/ })).toBeDefined()
-      expect(await ui.find({ type: 'Text', text: w.reading })).toBeDefined()
+      expect(await ui.find({ type: 'Text', text: /^ · 3m 36s · 19\.9k tokens$/ })).toBeDefined()
+      // The main agent, then the block of the subagents with the ones at work counted; each agent in its own lines, the child two columns further in.
+      expect(await paneLines(ui)).toEqual([
+        `● ${w.run} · 3m 36s · 19.9k tokens`,
+        '______________________________',
+        '',
+        'Build my landing page',
+        '',
+        `● ${w.main} · opus-4-5 · high`,
+        `  ${w.working} · 3m 36s · 230 tokens`,
+        '  ███░░░░░░░',
+        `  ▶ ${w.request}`,
+        '',
+        w.subagents,
+        '  ● frontend-developer · opus-4-5 · high',
+        '    Building the login components',
+        `    ${w.reading}`,
+        `    ${w.working} · 3m 36s · 1.2k tokens`,
+        '    ███░░░░░░░',
+        '',
+        '    ● backend-developer · opus-4-5 · high',
+        '      Reviewing authentication routes',
+        `      ${w.working} · 3m 36s · 18.4k tokens`,
+        '      ███░░░░░░░',
+        '',
+        w.history,
+        '______________________________',
+        '',
+        w.none
+      ])
+      // One bar for the main agent and one for each subagent at work, and no rule line: the agents are apart by a blank row.
+      expect(await ui.findAll({ type: 'Text', text: /[█░]/ })).toHaveLength(3)
+      expect(await ui.findAll({ type: 'Text', text: /─/ })).toHaveLength(0)
       expect(await ui.findAll({ type: 'Box', props: { paddingLeft: 2 } } as never)).not.toHaveLength(0)
-
-      // The rules: before the subagents and between them (the run and the history are apart by a blank row); each cut to the width.
-      const rules = await ui.findAll({ type: 'Text', text: /^─+$/ })
-
-      expect(rules).toHaveLength(2)
-
-      for (const rule of rules) {
-        expect(rule.props?.wrap).toBe('truncate-end')
-        expect(rule.props?.dimColor).toBe(true)
-        expect(rule.text.length).toBeLessThanOrEqual(60)
-      }
-      expect(Math.max(...rules.map((rule: { text: string }) => rule.text.length))).toBe(58)
-      expect(await ui.find({ type: 'Text', text: w.none })).toBeDefined()
       await ui.unmount()
     }
 
-    // Everything ends: the group of the history is open, with the figures of the turn and of each agent.
+    // Everything ends: the group of the history is open, with the figures of the turn and of each agent, and no bar is left.
     await finish($, 'answer', lead)
     await finish($, 'answer', helper)
     await finish($)
@@ -3291,18 +3501,25 @@ test('the pane draws the heading, the total time and tokens, the active count, t
     for (const surface of ['terminal', 'desktop'] as const) {
       const ui = await paneView($, 60, surface)
 
-      expect(await ui.find({ type: 'Text', text: w.runs })).toBeDefined()
-      expect(await ui.find({ type: 'Text', text: /^19\.9k tokens$/ })).toBeDefined()
-      expect(await ui.find({ type: 'Text', text: /^230$/ })).toBeDefined()
-      expect(await ui.find({ type: 'Text', text: /^1\.2k$/ })).toBeDefined()
-      expect(await ui.find({ type: 'Text', text: /^18\.4k$/ })).toBeDefined()
-      expect(await ui.find({ type: 'Text', text: /^Building the login components$/ })).toBeDefined()
-      expect(await ui.find({ type: 'Text', text: /^Reviewing authentication routes$/ })).toBeDefined()
-      // No rule at all: the run and the history are apart by a blank row, and the one group has none above it.
-      expect(await ui.findAll({ type: 'Text', text: /^─+$/ })).toHaveLength(0)
+      expect(blockOf(await paneLines(ui), /^(History|Historial)/, 18)).toEqual([
+        w.runs,
+        '______________________________',
+        '',
+        '✓ Build my landing page',
+        `  ${w.done} · 3m 36s · 19.9k tokens`,
+        `    ✓ ${w.main} · opus-4-5 · high`,
+        `      ${w.done} · 3m 36s · 230 tokens`,
+        '    ✓ frontend-developer · opus-4-5 · high',
+        '      Building the login components',
+        `      ${w.done} · 3m 36s · 1.2k tokens`,
+        '      ✓ backend-developer · opus-4-5 · high',
+        '        Reviewing authentication routes',
+        `        ${w.done} · 3m 36s · 18.4k tokens`
+      ])
+      expect(await ui.find({ type: 'Text', text: /[█░─]/ })).toBeUndefined()
       // Nothing runs any more: no activity line is left, and the run is back to waiting.
-      expect(await ui.find({ type: 'Text', text: w.reading })).toBeUndefined()
-      expect(await ui.find({ type: 'Text', text: w.none })).toBeUndefined()
+      expect(await ui.find({ type: 'Text', text: new RegExp(w.reading) })).toBeUndefined()
+      expect(await ui.find({ type: 'Text', text: new RegExp(`^${w.none}$`) })).toBeUndefined()
       await ui.unmount()
     }
 
@@ -3329,7 +3546,7 @@ test('the heading dot pulses with the timer while anything runs, and stands stil
   await opener.unmount()
 })
 
-test('a narrow pane drops the tokens, then the status labels, then the bars; the rules and the names are cut to the width', async ($, on) => {
+test('a narrow pane keeps the tokens, the status words and the bar: only the names, the tasks and the underlines are cut to the width', async ($, on) => {
   squad(on, 'a1')
 
   let usage: object | null = usageOf(200, 26, 4)
@@ -3345,28 +3562,27 @@ test('a narrow pane drops the tokens, then the status labels, then the bars; the
   await finish($, 'answer', 'a1')
   usage = null
 
-  const shows = async (columns: number) => {
+  const wide = await paneView($, 60)
+  const lines = await paneLines(wide)
+
+  await wide.unmount()
+  // No threshold of width: the fields and the bar are there at 60 columns, and they are at 24 and 40 too.
+  expect(lines).toContain('  Working · 0s · 230 tokens')
+  expect(lines).toContain('  ███░░░░░░░')
+  expect(lines).toContain('    Done · 0s · 230 tokens')
+  expect(lines[0]).toBe('● Current run · 0s · 460 tokens')
+
+  for (const columns of [24, 40]) {
     const ui = await paneView($, columns)
-    const seen = {
-      tokens: (await ui.find({ type: 'Text', text: /^230$/ })) !== undefined,
-      headerTokens: (await ui.find({ type: 'Text', text: /tokens$/ })) !== undefined,
-      label: (await ui.find({ type: 'Text', text: /^Done$/ })) !== undefined,
-      bar: (await ui.find({ type: 'Text', text: /^[█░]{10}$/ })) !== undefined,
-      widest: Math.max(...(await ui.findAll({ type: 'Text', text: /^─+$/ })).map((rule: { text: string }) => rule.text.length))
-    }
+
+    expect(withoutRules(await paneLines(ui))).toEqual(withoutRules(lines))
 
     for (const text of await ui.findAll({ type: 'Text', text: /agent-name|delegated|Build my/ })) expect(text.props?.wrap).toBe('truncate-end')
+    // Each title's underline is cut to the width when the pane is narrower than its 30 columns.
+    expect((await ui.findAll({ type: 'Text', text: /^_+$/ })).map((rule: { text: string }) => rule.text.length)).toEqual([Math.min(30, columns), Math.min(30, columns)])
+    await expectFits(ui, columns)
     await ui.unmount()
-
-    return seen
   }
-
-  expect(TOKENS_MIN_COLUMNS).toBeGreaterThan(STATUS_MIN_COLUMNS)
-  expect(await shows(TOKENS_MIN_COLUMNS)).toMatchObject({ tokens: true, headerTokens: true, label: true, bar: true, widest: TOKENS_MIN_COLUMNS - 2 })
-  expect(await shows(TOKENS_MIN_COLUMNS - 1)).toMatchObject({ tokens: false, headerTokens: false, label: true, bar: true })
-  expect(await shows(STATUS_MIN_COLUMNS)).toMatchObject({ tokens: false, label: true })
-  expect(await shows(STATUS_MIN_COLUMNS - 1)).toMatchObject({ tokens: false, label: false, widest: STATUS_MIN_COLUMNS - 3 })
-  expect(await shows(24)).toMatchObject({ tokens: false, label: false, bar: false, widest: 22 })
 })
 
 test('each section title has a faint line under it, as long as the title', async ($, on) => {

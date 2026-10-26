@@ -42,10 +42,10 @@ test('each language has its own texts, and a word for everything', async () => {
 
   // No text is empty, in either language.
   for (const texts of [es, en]) {
-    for (const key of ['name', 'detail', 'close', 'currentRun', 'mainAgent', 'ready', 'history', 'nothing', 'noFinished', 'tokens', 'subagents', 'working', 'defaultTitle', 'workingOnIt'] as const) {
+    for (const key of ['name', 'detail', 'close', 'currentRun', 'mainAgent', 'ready', 'history', 'nothing', 'noFinished', 'tokens', 'subagents', 'defaultTitle', 'workingOnIt'] as const) {
       expect(texts[key].length).toBeGreaterThan(0)
     }
-    for (const group of [texts.reason, texts.task, texts.agent, texts.activity]) {
+    for (const group of [texts.reason, texts.agent, texts.activity]) {
       for (const text of Object.values(group)) expect(text.length).toBeGreaterThan(0)
     }
   }
@@ -80,6 +80,9 @@ test('the pane sections, the main agent and the ready message are put in each la
   for (const texts of [en, es]) {
     expect(Object.keys(texts)).not.toContain('now')
     expect(Object.keys(texts)).not.toContain('phase')
+    // The checklist's rows are a mark and a name (no label of their status), and a subagent whose activity is unknown shows none.
+    expect(Object.keys(texts)).not.toContain('task')
+    expect(Object.keys(texts)).not.toContain('working')
   }
 })
 
@@ -105,7 +108,6 @@ test('the English texts are the ones the radar always had', async () => {
     error: 'The turn ended with an error',
     refusal: 'The model declined to answer'
   })
-  expect(en.task).toEqual({ done: 'Done', active: 'Working', upcoming: 'Next' })
   expect(en.agent).toEqual({ working: 'Working', needsYou: 'Needs you', done: 'Done', failed: 'Failed', stopped: 'Stopped' })
   expect(en.activity).toEqual({
     reading: 'Reading project files',
@@ -115,7 +117,7 @@ test('the English texts are the ones the radar always had', async () => {
     command: 'Running a command',
     delegating: 'Delegating work'
   })
-  expect([en.working, en.defaultTitle, en.workingOnIt]).toEqual(['Working', 'Working on your request', 'Working on it'])
+  expect([en.defaultTitle, en.workingOnIt]).toEqual(['Working on your request', 'Working on it'])
 })
 
 test('the command has a description, answers and a usage in each language, naming both arguments', async () => {

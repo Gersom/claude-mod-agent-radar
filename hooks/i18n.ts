@@ -1,4 +1,4 @@
-import type { ActivityCode, ChecklistTask, Lang, ReasonCode, SubagentStatus } from '../types'
+import type { ActivityCode, Lang, ReasonCode, SubagentStatus } from '../types'
 
 /** Every word the radar writes itself, in one language. Names and titles that come from the person's text are never in here. */
 export type Texts = {
@@ -35,14 +35,10 @@ export type Texts = {
   runs: (count: number) => string
   /** Why the turn waits or is stuck. */
   reason: Record<ReasonCode, string>
-  /** A checklist task's status. */
-  task: Record<ChecklistTask['status'], string>
   /** A subagent's status. */
   agent: Record<SubagentStatus, string>
   /** What a subagent is doing, from its tools. */
   activity: Record<ActivityCode, string>
-  /** A subagent's activity while none is known. */
-  working: string
   /** The title of a turn whose prompt leaves nothing to name it by, and the checklist's one line when there are no tasks. */
   defaultTitle: string
   /** The name of a task whose text leaves nothing valid. */
@@ -95,7 +91,6 @@ export const TEXTS: Record<Lang, Texts> = {
       error: 'El turno terminó con un error',
       refusal: 'El modelo se negó a responder'
     },
-    task: { done: 'Hecho', active: 'En curso', upcoming: 'Siguiente' },
     agent: { working: 'Trabajando', needsYou: 'Te necesita', done: 'Hecho', failed: 'Falló', stopped: 'Detenido' },
     activity: {
       reading: 'Leyendo archivos del proyecto',
@@ -105,7 +100,6 @@ export const TEXTS: Record<Lang, Texts> = {
       command: 'Ejecutando un comando',
       delegating: 'Delegando trabajo'
     },
-    working: 'Trabajando',
     defaultTitle: 'Trabajando en tu petición',
     workingOnIt: 'En ello',
     commandDescription: 'Abre o cierra el panel de detalle de Claude Radar, o muestra u oculta su banda.',
@@ -139,7 +133,6 @@ export const TEXTS: Record<Lang, Texts> = {
       error: 'The turn ended with an error',
       refusal: 'The model declined to answer'
     },
-    task: { done: 'Done', active: 'Working', upcoming: 'Next' },
     agent: { working: 'Working', needsYou: 'Needs you', done: 'Done', failed: 'Failed', stopped: 'Stopped' },
     activity: {
       reading: 'Reading project files',
@@ -149,7 +142,6 @@ export const TEXTS: Record<Lang, Texts> = {
       command: 'Running a command',
       delegating: 'Delegating work'
     },
-    working: 'Working',
     defaultTitle: 'Working on your request',
     workingOnIt: 'Working on it',
     commandDescription: 'Open or close the Claude Radar detail pane, or show or hide its band.',

@@ -19,7 +19,6 @@ import {
   hidesTools,
   initialState,
   isLive,
-  layoutOf,
   PANE_COLUMNS,
   PANE_ID,
   PANE_ROWS,
@@ -30,17 +29,16 @@ import {
   settleTurn,
   spawnSubagent,
   startTurn,
-  STATUS_MIN_COLUMNS,
+  statusFields,
   stepModel,
   taskIdOf,
   TICK_MS,
-  TOKENS_MIN_COLUMNS,
   tokensOf,
   updateTask,
   workSubagent,
   writeTodos
 } from './claude-radar'
-import type { PaneCurrent, PaneRow, PaneTurn } from './claude-radar'
+import type { PaneCurrent, PaneRow } from './claude-radar'
 import { detectLang, NAME, textsOf } from './i18n'
 
 /** The key of `$.store` that keeps the ON/OFF choice between sessions. */
@@ -74,7 +72,7 @@ const SUBAGENT_TONE = {
   working: GREEN
 } as const
 
-/** The colour of a status bar: the moving one in blue, a finished one in its status colour. */
+/** The colour of a status bar (an agent at work has one): blue while it works, yellow while it waits for the person. */
 const barColor = (status: SubagentStatus) => (status === 'working' ? ACTIVE : SUBAGENT_TONE[status])
 
 /** The radar's state: what the band and the pane draw from. */
@@ -609,25 +607,8 @@ export const register: Register = on => {
       )
     }
 
-    // The body has no frame of its own to take off: four columns are added back for `layoutOf`, which counts the border and padding of a framed block; the checklist sits two columns in.
-    const { showBars, nameWidth } = layoutOf(view.current?.tasks ?? [], columns + 2)
-    const showStatus = columns >= STATUS_MIN_COLUMNS
-    const showTokens = columns >= TOKENS_MIN_COLUMNS
-    // The status labels share one width so the columns of the agents line up.
-    const statusWidth = Math.max(...Object.values(t.agent).map(label => label.length))
-
-    /** The widths of the time and tokens columns of a block, so its rows line up; the tokens column is gone in a narrow pane, or when no row has tokens. */
-    const widthsOf = (times: string[], tokens: (string | null)[]) => ({
-      time: Math.max(0, ...times.map(time => time.length)),
-      tokens: showTokens ? Math.max(0, ...tokens.map(text => text?.length ?? 0)) : 0
-    })
-
-    /** A thin line across the pane, `indent` columns shorter; the text cuts it to the width. */
-    const rule = (indent = 0) => (
-      <Text wrap="truncate-end" dimColor>
-        {'─'.repeat(Math.max(1, columns - indent))}
-      </Text>
-    )
+    // The body has no frame of its own. Each agent is a few lines, one under the other, and a level of the hierarchy is two columns in;
+    // every line is cut with `…` to the width (`columns`) by its own text, so nothing passes it.
 
     /** The two-column cell of a mark. */
     const markCell = (mark: string, color?: string, isDim = false) => (
@@ -643,7 +624,7 @@ export const register: Register = on => {
       <Box flexDirection="column" marginBottom={1}>
         <Box>
           {mark}
-          <Box flexGrow={1} flexShrink={0}>
+          <Box flexGrow={1} flexShrink={1}>
             <Text wrap="truncate-end" bold>
               {title}
             </Text>
@@ -662,44 +643,23 @@ export const register: Register = on => {
       </Box>
     )
 
-    /** The right side of an agent line, which never shrinks: the status label (in its colour), the time, the tokens and, if `withBar`, the status bar. Each drops out when the pane is too narrow for it. */
-    const cells = (
-      fields: { bar: string; status: SubagentStatus; time: string; tokens: string | null },
-      widths: { time: number; tokens: number },
-      label: { color?: string; text: string },
-      withBar: boolean
-    ) => (
-      <Box flexShrink={0}>
-        {showStatus ? (
-          <Box flexShrink={0} marginLeft={2} width={statusWidth}>
-            <Text color={label.color} dimColor={label.color === undefined}>
-              {label.text}
-            </Text>
-          </Box>
-        ) : null}
-        <Box flexShrink={0} marginLeft={2} width={widths.time} justifyContent="flex-end">
-          <Text dimColor>{fields.time}</Text>
-        </Box>
-        {widths.tokens === 0 ? null : (
-          <Box flexShrink={0} marginLeft={2} width={widths.tokens} justifyContent="flex-end">
-            {fields.tokens === null ? null : <Text dimColor>{fields.tokens}</Text>}
-          </Box>
-        )}
-        {withBar && showBars ? (
-          <Box flexShrink={0} marginLeft={2}>
-            <Text color={barColor(fields.status)}>{fields.bar}</Text>
-          </Box>
-        ) : null}
-      </Box>
+    /** Whether an agent is at work (running or waiting for the person): only then is its name in bold and only then it has a bar. */
+    const isAtWork = (status: SubagentStatus) => status === 'working' || status === 'needsYou'
+
+    /** A dim line of text. */
+    const noteLine = (text: string) => (
+      <Text wrap="truncate-end" dimColor>
+        {text}
+      </Text>
     )
 
-    /** The line of an agent, the main one or a subagent: its mark, name and model on the left (they give way to the width) and `right` after them. */
-    const agentLine = (row: PaneRow, right: ReturnType<typeof cells>) => (
+    /** The first line of an agent, the main one or a subagent: its mark, its name and `· model · effort` dim. The name gives way to the width first; the model and effort stay. */
+    const headLine = (row: PaneRow) => (
       <Box>
         {markCell(row.mark, SUBAGENT_TONE[row.status])}
         <Box flexGrow={1} flexShrink={1}>
           <Box flexShrink={1}>
-            <Text wrap="truncate-end" bold={row.status === 'working' || row.status === 'needsYou'}>
+            <Text wrap="truncate-end" bold={isAtWork(row.status)}>
               {row.name}
             </Text>
           </Box>
@@ -711,18 +671,64 @@ export const register: Register = on => {
             </Box>
           )}
         </Box>
-        {right}
       </Box>
     )
 
-    /** A dim line under an agent's name, indented past the mark. */
-    const noteLine = (text: string) => (
+    /** The status line of an agent or of a turn: its status word in its colour, then the tasks done (the main agent's), the time and the tokens, dim, separated by `·`. */
+    const statusLine = (status: SubagentStatus, label: string, fields: string[]) => (
       <Box>
-        <Box flexShrink={0} width={2} />
-        <Box flexGrow={1} flexShrink={1}>
+        <Box flexShrink={0}>
+          <Text color={SUBAGENT_TONE[status]}>{label}</Text>
+        </Box>
+        <Box flexShrink={1}>
           <Text wrap="truncate-end" dimColor>
-            {text}
+            {` · ${fields.join(' · ')}`}
           </Text>
+        </Box>
+      </Box>
+    )
+
+    /** An agent's one bar, in its own line under the status: the moving block while it is at work; a finished agent has none. Never a percentage. */
+    const barLine = (row: PaneRow) =>
+      row.bar === null ? null : (
+        <Text wrap="truncate-end" color={barColor(row.status)}>
+          {row.bar}
+        </Text>
+      )
+
+    /** The main agent's checklist: a mark and a name per task, nothing else (no bar, no label). */
+    const checklist = (tasks: PaneCurrent['tasks']) => (
+      <Box flexDirection="column">
+        {tasks.map((row, index) => (
+          <Box key={`task-${index}`}>
+            <Box flexShrink={0} width={2}>
+              <Text color={row.status === 'done' ? GREEN : row.status === 'active' ? ACTIVE : undefined} dimColor={row.status === 'upcoming'}>
+                {row.mark}
+              </Text>
+            </Box>
+            <Box flexShrink={1}>
+              <Text wrap="truncate-end" bold={row.status === 'active'} dimColor={row.status !== 'active'}>
+                {row.name}
+              </Text>
+            </Box>
+          </Box>
+        ))}
+      </Box>
+    )
+
+    /**
+     * An agent in lines, one under the other: its head line and, two columns in, what it was asked (`task`), what it does now (`activity`, only while at work),
+     * its status line, its bar (only while at work) and, for the main agent, its checklist (`after`).
+     */
+    const agentBlock = (row: PaneRow, task: string | null, activity: string | null, after: ReturnType<typeof checklist> | null = null) => (
+      <Box flexDirection="column">
+        {headLine(row)}
+        <Box flexDirection="column" paddingLeft={2}>
+          {task === null ? null : noteLine(task)}
+          {activity === null ? null : noteLine(activity)}
+          {statusLine(row.status, row.label, statusFields(row, t))}
+          {barLine(row)}
+          {after}
         </Box>
       </Box>
     )
@@ -731,104 +737,52 @@ export const register: Register = on => {
     const runHeading = (current: PaneCurrent | null) => {
       if (current === null) return heading(markCell('●', undefined, true), t.currentRun)
 
-      const total = [current.time, ...(current.tokens !== null && showTokens ? [`${current.tokens} ${t.tokens}`] : [])].join(' · ')
+      const total = [current.time, ...(current.tokens !== null ? [`${current.tokens} ${t.tokens}`] : [])].join(' · ')
 
       return heading(markCell(current.mark, current.tone === 'working' ? GREEN : TONE[current.tone], !current.isRunning || !current.isLit), t.currentRun, total)
     }
 
-    /** The whole run of the turn in progress. */
-    const currentBlock = (current: PaneCurrent) => {
-      const agents = [current.leader, ...current.agents]
-      const widths = widthsOf(
-        agents.map(row => row.time),
-        agents.map(row => row.tokens)
-      )
-
-      return (
-        <Box flexDirection="column">
-          <Box>
+    /** The whole run of the turn in progress: the title, the main agent with its checklist and, a blank row apart, the block of the subagents, one blank row between each. */
+    const currentBlock = (current: PaneCurrent) => (
+      <Box flexDirection="column">
+        <Box>
+          <Box flexShrink={1}>
+            <Text wrap="truncate-end">{current.title}</Text>
+          </Box>
+          {current.reason === null ? null : (
             <Box flexShrink={1}>
-              <Text wrap="truncate-end">{current.title}</Text>
-            </Box>
-            {current.reason === null ? null : (
-              <Box flexShrink={0}>
-                <Text wrap="truncate-end" dimColor>
-                  {` · ${current.reason}`}
-                </Text>
-              </Box>
-            )}
-          </Box>
-          <Box key="leader" flexDirection="column">
-            {agentLine(current.leader, cells(current.leader, widths, { color: SUBAGENT_TONE[current.leader.status], text: current.leader.label }, true))}
-            {current.leader.tasks === null ? null : noteLine(current.leader.tasks)}
-          </Box>
-          <Box key="checklist" flexDirection="column" marginLeft={2}>
-            {current.tasks.map((row, index) => (
-              <Box key={`task-${index}`}>
-                <Box flexShrink={0} width={2}>
-                  <Text color={row.status === 'done' ? GREEN : row.status === 'active' ? ACTIVE : undefined} dimColor={row.status === 'upcoming'}>
-                    {row.mark}
-                  </Text>
-                </Box>
-                <Box flexShrink={0} width={nameWidth}>
-                  <Text wrap="truncate-end" bold={row.status === 'active'} dimColor={row.status !== 'active'}>
-                    {row.name}
-                  </Text>
-                </Box>
-                {showBars ? (
-                  <Box flexShrink={0} marginLeft={2}>
-                    <Text color={row.status === 'done' ? GREEN : row.status === 'active' ? ACTIVE : undefined} dimColor={row.status === 'upcoming'}>
-                      {row.bar}
-                    </Text>
-                  </Box>
-                ) : null}
-                <Box flexShrink={0} marginLeft={2}>
-                  <Text dimColor={row.status !== 'active'}>{row.label}</Text>
-                </Box>
-              </Box>
-            ))}
-          </Box>
-          {current.agents.length === 0 ? null : (
-            <Box key="subagents" flexDirection="column" marginLeft={2}>
-              {rule(2)}
-              <Box>
-                <Box flexGrow={1} flexShrink={1}>
-                  <Text wrap="truncate-end" bold dimColor>
-                    {t.subagents}
-                  </Text>
-                </Box>
-                <Box flexShrink={0} marginLeft={2}>
-                  <Text color={current.active > 0 ? GREEN : undefined} dimColor={current.active === 0}>
-                    {t.active(current.active)}
-                  </Text>
-                </Box>
-              </Box>
-              {current.agents.map((agent, index) => (
-                <Box key={`agent-${agent.id}`} flexDirection="column" paddingLeft={agent.depth * 2}>
-                  {index === 0 ? null : rule(2 + agent.depth * 2)}
-                  {agentLine(agent, cells(agent, widths, { color: SUBAGENT_TONE[agent.status], text: agent.label }, true))}
-                  {agent.task === null ? null : noteLine(agent.task)}
-                  {agent.status === 'working' || agent.status === 'needsYou' ? noteLine(agent.activity) : null}
-                </Box>
-              ))}
+              <Text wrap="truncate-end" dimColor>
+                {` · ${current.reason}`}
+              </Text>
             </Box>
           )}
         </Box>
-      )
-    }
+        <Box key="leader" flexDirection="column" marginTop={1}>
+          {agentBlock(current.leader, null, null, current.tasks.length === 0 ? null : checklist(current.tasks))}
+        </Box>
+        {current.agents.length === 0 ? null : (
+          <Box key="subagents" flexDirection="column" marginTop={1}>
+            <Box>
+              <Text wrap="truncate-end" bold dimColor>
+                {t.subagents}
+              </Text>
+              <Text wrap="truncate-end" color={current.active > 0 ? GREEN : undefined} dimColor={current.active === 0}>
+                {` · ${t.active(current.active)}`}
+              </Text>
+            </Box>
+            {current.agents.map((agent, index) => (
+              <Box key={`agent-${agent.id}`} flexDirection="column" marginTop={index === 0 ? 0 : 1} paddingLeft={2 + agent.depth * 2}>
+                {agentBlock(agent, agent.task, isAtWork(agent.status) ? agent.activity : null)}
+              </Box>
+            ))}
+          </Box>
+        )}
+      </Box>
+    )
 
-    /** A turn's total tokens with their unit: the group's heading is where the figures are named. */
-    const turnTokens = (turn: PaneTurn) => (turn.tokens === null ? null : `${turn.tokens} ${t.tokens}`)
-
-    /** The archived turns, one open group each: the turn's title and final state, then the main agent and the subagents in their final state. */
-    const historyBlock = () => {
-      const rows = view.turns.flatMap(turn => [turn.leader, ...turn.agents])
-      const widths = widthsOf(
-        [...rows.map(row => row.time), ...view.turns.map(turn => turn.time)],
-        [...rows.map(row => row.tokens), ...view.turns.map(turnTokens)]
-      )
-
-      return view.turns.map((turn, index) => (
+    /** The archived turns, one open group each: the turn's mark and title, its final state, time and tokens, then, two columns further in, the main agent and the subagents in their final state (no bar, no activity). */
+    const historyBlock = () =>
+      view.turns.map((turn, index) => (
         <Box key={`turn-${turn.id}`} flexDirection="column" marginTop={index === 0 ? 0 : 1}>
           <Box>
             {markCell(turn.mark, SUBAGENT_TONE[turn.status])}
@@ -837,20 +791,18 @@ export const register: Register = on => {
                 {turn.title}
               </Text>
             </Box>
-            {cells({ bar: '', status: turn.status, time: turn.time, tokens: turnTokens(turn) }, widths, { color: SUBAGENT_TONE[turn.status], text: turn.label }, false)}
           </Box>
-          <Box flexDirection="column" paddingLeft={2}>
-            {agentLine(turn.leader, cells(turn.leader, widths, { text: turn.leader.tasks ?? '' }, false))}
+          <Box paddingLeft={2}>{statusLine(turn.status, turn.label, statusFields(turn, t))}</Box>
+          <Box flexDirection="column" paddingLeft={4}>
+            {agentBlock(turn.leader, null, null)}
             {turn.agents.map(agent => (
               <Box key={`turn-${turn.id}-${agent.id}`} flexDirection="column" paddingLeft={agent.depth * 2}>
-                {agentLine(agent, cells(agent, widths, { color: SUBAGENT_TONE[agent.status], text: agent.label }, false))}
-                {agent.task === null ? null : noteLine(agent.task)}
+                {agentBlock(agent, agent.task, null)}
               </Box>
             ))}
           </Box>
         </Box>
       ))
-    }
 
     return (
       <Box flexDirection="column">

@@ -34,9 +34,6 @@ export const BAR_WIDTH = 10
 /** The segments the indeterminate bar's moving block fills. */
 const BLOCK_WIDTH = 3
 
-/** Below this many columns the pane drops its bars (the checklist's, the agents' and the turn's). */
-export const BARS_MIN_COLUMNS = 40
-
 /** The most characters of an activity's name. */
 const NAME_MAX = 40
 
@@ -241,57 +238,32 @@ export const hidesTools = (state: ClaudeRadarState) => {
   return phase === 'working' || activeCount(state.subagents) > 0
 }
 
-/** A line of the checklist, as text: the mark, the name, the bar and the label of its status. */
+/** A line of the checklist, as text: the mark and the name, nothing else (no bar, no label of its status). */
 export type TaskRow = {
   mark: '✓' | '▶' | '○'
   name: string
-  bar: string
-  label: string
   status: ChecklistTask['status']
 }
 
 const MARKS = { done: '✓', active: '▶', upcoming: '○' } as const
 
-/** The characters a task's label takes: the longest of the language's three; the others are padded to it so the bars line up. */
-const labelWidthOf = (t: Texts) => Math.max(...Object.values(t.task).map(label => label.length))
-
-/** The row of a task: a full bar when done, the real percentage or the moving block when active, an empty one when it waits. */
-export const rowOf = (task: ChecklistTask, tick: number, t: Texts): TaskRow => ({
+/** The row of a task. */
+export const rowOf = (task: ChecklistTask, t: Texts): TaskRow => ({
   mark: MARKS[task.status],
   name: task.name || t.workingOnIt,
-  bar: task.status === 'done' ? bar(100, tick) : task.status === 'active' ? bar(task.percent, tick) : bar(0, tick),
-  label: t.task[task.status].padEnd(labelWidthOf(t)),
   status: task.status
 })
 
 /** The rows to draw: the tasks, or, when there are none and the agent is working, the one line that says so. */
-export const rowsOf = (checklist: Checklist, tick: number, t: Texts): TaskRow[] => {
-  if (checklist.tasks.length > 0) return checklist.tasks.map(task => rowOf(task, tick, t))
+export const rowsOf = (checklist: Checklist, t: Texts): TaskRow[] => {
+  if (checklist.tasks.length > 0) return checklist.tasks.map(task => rowOf(task, t))
   if (checklist.phase !== 'working') return []
 
-  return [rowOf({ id: 'request', name: t.defaultTitle, status: 'active', percent: null, hasReported: false }, tick, t)]
-}
-
-/** How the rows fit `bodyColumns`: whether the bars show, and how many columns a name may take. Nothing is wider than the block's inner width (`bodyColumns` less border and padding). */
-export const layoutOf = (rows: readonly TaskRow[], bodyColumns: number) => {
-  const inner = Math.max(0, bodyColumns - 4)
-  const showBars = bodyColumns >= BARS_MIN_COLUMNS
-  // The mark and its space, the gap and the bar, the gap and the label.
-  const labelWidth = rows.reduce((most, row) => Math.max(most, row.label.length), 0)
-  const fixed = 2 + (showBars ? 2 + BAR_WIDTH : 0) + 2 + labelWidth
-  const longest = rows.reduce((most, row) => Math.max(most, row.name.length), 1)
-
-  return { showBars, nameWidth: Math.max(1, Math.min(longest, inner - fixed)) }
+  return [rowOf({ id: 'request', name: t.defaultTitle, status: 'active', percent: null, hasReported: false }, t)]
 }
 
 /** The most turns the archive keeps. */
 export const TURNS_MAX = 10
-
-/** Below this many columns of the pane body the agent rows drop their status label. */
-export const STATUS_MIN_COLUMNS = 36
-
-/** Below this many columns of the pane body the agent rows drop their tokens column (the label, the time and the bar take the room first). */
-export const TOKENS_MIN_COLUMNS = 52
 
 type Subagents = ClaudeRadarState['subagents']
 
@@ -568,18 +540,18 @@ export type PaneRow = {
   label: string
   /** `opus-4-5 · high`, or null while the model is unknown. */
   detail: string | null
-  /** The status bar: the moving block while it works or waits, full once it ended. Never a percentage. */
-  bar: string
+  /** The status bar, one per agent: the moving block while it works or waits, null once it ended (no bar then). Never a percentage. */
+  bar: string | null
   /** `2/3`, the tasks done of the checklist; null when there is none. */
   tasks: string | null
   /** The tokens it used so far, short (`18.4k`); null while there are none. */
   tokens: string | null
 }
 
-/** A subagent in the pane: live or finished, with the whole task (one line, tidied) and the activity, in words. */
+/** A subagent in the pane: live or finished, with the whole task (one line, tidied) and the activity, in words (null while none is known; the pane draws it only while the agent is at work). */
 export type PaneAgent = PaneRow & {
   task: string | null
-  activity: string
+  activity: string | null
   depth: number
 }
 
@@ -623,11 +595,21 @@ export type PaneTurn = {
 /** A count of tokens as the pane writes it, or null when there are none (nothing is drawn then). */
 const tokensText = (tokens: number | undefined) => (tokens !== undefined && tokens > 0 ? compactTokens(tokens) : null)
 
-/** The mark and the status bar of an agent by its status. */
+/** The mark and the status bar of an agent by its status: only an agent at work has a bar. */
 const looksOf = (status: SubagentStatus, tick: number) => ({
   mark: SUBAGENT_MARKS[status],
-  bar: isActive(status) ? bar(null, tick) : bar(100, tick)
+  bar: isActive(status) ? bar(null, tick) : null
 })
+
+/**
+ * The fields that follow an agent's (or a turn's) status word on its line, in this order: the tasks done of the checklist (the main agent, when it has one),
+ * the time and the tokens with their unit (when there are any). The drawing joins them with ` · `.
+ */
+export const statusFields = (fields: { tasks?: string | null; time: string; tokens: string | null }, t: Texts) => [
+  ...(fields.tasks ? [fields.tasks] : []),
+  fields.time,
+  ...(fields.tokens === null ? [] : [`${fields.tokens} ${t.tokens}`])
+]
 
 /** The pane's row of a subagent. */
 const paneAgentOf = (agent: SubagentState, now: number, depth: number, tick: number, t: Texts): PaneAgent => ({
@@ -637,7 +619,7 @@ const paneAgentOf = (agent: SubagentState, now: number, depth: number, tick: num
   name: agent.name,
   time: elapsed((agent.finishedAt ?? now) - agent.startedAt),
   task: (agent.task === null ? '' : tidy(agent.task)) || null,
-  activity: agent.activity === null ? t.working : t.activity[agent.activity],
+  activity: agent.activity === null ? null : t.activity[agent.activity],
   label: t.agent[agent.status],
   detail: detailOf(agent.modelInfo),
   tasks: null,
@@ -724,7 +706,7 @@ const currentOf = (state: ClaudeRadarState, now: number, tick: number, t: Texts)
       tick,
       t
     ),
-    tasks: rowsOf(checklist, tick, t),
+    tasks: rowsOf(checklist, t),
     agents: paneAgentsOf(state.subagents, now, tick, t),
     active: activeCount(state.subagents)
   }
