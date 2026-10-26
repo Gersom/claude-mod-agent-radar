@@ -820,8 +820,7 @@ export const register: Register = on => {
       )
 
       return view.turns.map((turn, index) => (
-        <Box key={`turn-${turn.id}`} flexDirection="column">
-          {index === 0 ? null : rule()}
+        <Box key={`turn-${turn.id}`} flexDirection="column" marginTop={index === 0 ? 0 : 1}>
           <Box>
             {markCell(turn.mark, SUBAGENT_TONE[turn.status])}
             <Box flexGrow={1} flexShrink={1}>

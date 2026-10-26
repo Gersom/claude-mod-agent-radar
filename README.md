@@ -142,7 +142,7 @@ Sin límite de filas (el motor lo desplaza); todo se trunca con `…` al ancho d
   - El **agente principal** (`Main agent`): su fila (ver abajo), `hechas/total` en la línea de debajo si hay checklist y, después, el checklist completo.
   - El bloque de los **subagentes del turno** (los que trabajan y los que ya terminaron), sangrado bajo el agente principal y con su jerarquía (ver «Subagentes»): un título `Subagents` con el contador de los activos a la derecha (`2 active`; en verde si hay alguno, atenuado si no) y, bajo él, una fila por agente separada de la siguiente por una línea fina.
   - Sin turno en curso: `All done, ready for more instructions`.
-- **History** (historial): el título con el número de turnos a la derecha (`2 runs`; `1 run` en singular) y un grupo por turno terminado, el más reciente primero, separados por una línea fina (ver «Historial»). Vacío: `No finished turns yet`.
+- **History** (historial): el título con el número de turnos a la derecha (`2 runs`; `1 run` en singular) y un grupo por turno terminado, el más reciente primero, separados por una fila en blanco, sin líneas (ver «Historial»). Vacío: `No finished turns yet`.
 
 Sin ningún turno, ni en curso ni terminado: `Nothing running yet`.
 
@@ -215,7 +215,7 @@ Un turno se **archiva** cuando el agente principal terminó (bien, con error o i
 - el **agente principal**: modelo y esfuerzo, cuántas tareas del checklist se hicieron del total y sus tokens;
 - los **subagentes** del turno, en orden de inicio, cada uno con su estado final, duración, tokens y tarea.
 
-El panel dibuja un grupo por turno, siempre abierto: una cabecera (título, estado final con su color, duración y tokens) y debajo el agente principal (`hechas/total` si había tareas, tiempo y tokens) y sus subagentes, sangrados, con su estado final, duración, tokens y, en su línea, su tarea. Un turno sin subagentes muestra solo la fila del agente principal. Entre un grupo y el siguiente va una línea fina. El checklist y el motivo exacto de un error no se conservan en el historial.
+El panel dibuja un grupo por turno, siempre abierto: una cabecera (título, estado final con su color, duración y tokens) y debajo el agente principal (`hechas/total` si había tareas, tiempo y tokens) y sus subagentes, sangrados, con su estado final, duración, tokens y, en su línea, su tarea. Un turno sin subagentes muestra solo la fila del agente principal. Entre un grupo y el siguiente va una fila en blanco, sin líneas. El checklist y el motivo exacto de un error no se conservan en el historial.
 
 Si empieza un turno nuevo mientras el anterior sigue abierto (el principal ya terminó pero un subagente sigue activo), el anterior se archiva a la fuerza: los subagentes aún activos pasan a `Stopped` y el turno nuevo empieza vacío. Al terminar la sesión (`session.end`, también con `/clear`) se borra todo lo que el radar seguía, el historial incluido; solo se conserva la elección ON/OFF.
 
