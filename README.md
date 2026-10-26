@@ -39,8 +39,7 @@ ______________________________
 Build my landing page
 
 ● Main agent · opus-4-5 · high
-  Working · 1/3 · 3m 36s · 230 tokens
-  ███░░░░░░░
+  Working · 1/3 · 3m 36s · 230 tokens  ███░░░░░░░
   ✓ Analyze project structure
   ▶ Implement authentication
   ○ Run final tests
@@ -49,13 +48,11 @@ Subagents · 2 active
   ● frontend-developer · haiku
     Building the login components
     Reading project files
-    Working · 3m 10s · 1.2k tokens
-    ███░░░░░░░
+    Working · 3m 10s · 1.2k tokens  ███░░░░░░░
 
     ● backend-developer
       Reviewing authentication routes
-      Working · 2m 05s · 18.4k tokens
-      ███░░░░░░░
+      Working · 2m 05s · 18.4k tokens  ███░░░░░░░
 
 History · 2 runs
 ______________________________
@@ -130,8 +127,7 @@ ______________________________
 Build my landing page
 
 ● Agente principal · opus-4-5 · high
-  Trabajando · 1/3 · 3m 36s · 230 tokens
-  ███░░░░░░░
+  Trabajando · 1/3 · 3m 36s · 230 tokens  ███░░░░░░░
   ✓ Analyze project structure
   ▶ Implement authentication
   ○ Run final tests
@@ -140,13 +136,11 @@ Subagentes · 2 activos
   ● frontend-developer · haiku
     Building the login components
     Leyendo archivos del proyecto
-    Trabajando · 3m 10s · 1.2k tokens
-    ███░░░░░░░
+    Trabajando · 3m 10s · 1.2k tokens  ███░░░░░░░
 
     ● backend-developer
       Reviewing authentication routes
-      Trabajando · 2m 05s · 18.4k tokens
-      ███░░░░░░░
+      Trabajando · 2m 05s · 18.4k tokens  ███░░░░░░░
 
 Historial · 2 ejecuciones
 ______________________________
@@ -188,18 +182,18 @@ El agente principal y cada subagente se dibujan con las mismas líneas, una bajo
 1. **Cabecera:** la marca de estado, el nombre (en negrita mientras trabaja) y `· modelo · esfuerzo` atenuado (`● Explore · haiku · low`).
 2. **Tarea y actividad** (solo un subagente): la tarea delegada y, debajo, la actividad actual, cada una en su línea y atenuadas. La actividad se ve solo mientras el subagente trabaja o te espera, y solo si ya se conoce (sin ninguna llamada de herramienta aún, no hay línea: la etiqueta de estado ya dice `Working`). Un subagente terminado muestra la tarea, no la actividad.
 3. **Estado:** la etiqueta de estado con su color y, atenuados, separados por ` · ` y en este orden: `hechas/total` de las tareas (solo el agente principal, y solo si tiene checklist), el tiempo y los tokens con su unidad (solo si hay): `Working · 1/3 · 3m 36s · 230 tokens`.
-4. **Barra:** en su propia línea, solo mientras el agente trabaja o te espera (ver «Barras»).
+4. **Barra:** al final de la línea de estado, separada de sus campos por dos espacios (`Working · 1/3 · 3m 36s · 230 tokens  ███░░░░░░░`), solo mientras el agente trabaja o te espera (ver «Barras»).
 5. **Checklist** (solo el agente principal): una fila `marca nombre` por tarea (ver «El checklist»).
 
 El historial tiene el mismo diseño con el turno como cabecera: `marca título` y, debajo, su estado final, tiempo y tokens; el agente principal y los subagentes del turno van dentro, sangrados cuatro columnas, sin filas en blanco entre ellos y sin barras.
 
 ### Barras
 
-Hay **una sola barra por el agente principal y una por cada subagente activo, y ninguna más**: ni en las tareas del checklist, ni en los agentes terminados, ni en el historial, ni una del turno. Es la barra indeterminada de siempre (un bloque de 3 segmentos que se mueve con el temporizador, `bar(null, tick)`); **el radar nunca inventa porcentajes**. Va azul mientras el agente trabaja y amarilla si te espera; al terminar (`Done`, `Failed` o `Stopped`) desaparece.
+Hay **una sola barra por el agente principal y una por cada subagente activo, y ninguna más**: ni en las tareas del checklist, ni en los agentes terminados, ni en el historial, ni una del turno. Es la barra indeterminada de siempre (un bloque de 3 segmentos que se mueve con el temporizador, `bar(null, tick)`); **el radar nunca inventa porcentajes**. Va al final de la línea de estado del agente, no en una línea propia. Es azul mientras el agente trabaja y amarilla si te espera; al terminar (`Done`, `Failed` o `Stopped`) desaparece.
 
 ### El ancho
 
-Todo se trunca con `…` al ancho del cuerpo del panel; no hay umbrales de ancho ni campos que desaparezcan por falta de sitio. En un panel estrecho todo cede a la vez y se corta con `…`: el nombre del agente y su `· modelo · esfuerzo` (que se encogen juntos), la tarea, el título del turno y su motivo, los subtítulos de los títulos de sección y los nombres del checklist; la línea de estado (etiqueta, tiempo, tokens) y la barra se dibujan siempre y solo la línea de estado se corta por el final si ni siquiera ella cabe. La línea de guiones bajos de los títulos también se corta al ancho si el panel mide menos de 30.
+Todo se trunca con `…` al ancho del cuerpo del panel; no hay umbrales de ancho ni campos que desaparezcan por falta de sitio. En un panel estrecho todo cede a la vez y se corta con `…`: el nombre del agente y su `· modelo · esfuerzo` (que se encogen juntos), la tarea, el título del turno y su motivo, los subtítulos de los títulos de sección y los nombres del checklist; la línea de estado (etiqueta, tiempo, tokens) y la barra que va a su final se dibujan siempre y solo los campos de la línea de estado se cortan por el final si ni siquiera ellos caben (la barra no se corta). La línea de guiones bajos de los títulos también se corta al ancho si el panel mide menos de 30.
 
 ### Estado del turno
 
@@ -216,7 +210,7 @@ Sale solo de lo que Claude ya crea por su cuenta: `TodoWrite`, `TaskCreate` y `T
 - **Alta:** el hook `agent.spawn` guarda cada ejecución con su `agentId` y devuelve el resultado del motor tal cual.
 - **Nombre real:** el `subagentType` (`frontend-developer`, `Explore`, un agente de un plugin…), nunca una etiqueta genérica; solo se trunca visualmente.
 - **Dentro del turno:** los subagentes de un turno se quedan en la ejecución actual, con su estado (`Done`, `Failed` o `Stopped`) y su tiempo congelado, hasta que el turno se archiva. Ya no se retiran a los pocos segundos.
-- **Líneas:** las mismas que las del agente principal (ver «Cada agente en líneas»): la cabecera (marca de estado, nombre, modelo y esfuerzo), la tarea delegada, la actividad, la línea de estado (etiqueta, tiempo y tokens) y la barra. La barra **nunca lleva porcentaje**: se mueve mientras el subagente trabaja o te espera y desaparece al terminar (el color y la etiqueta de estado dicen cómo acabó). De un subagente terminado se ve la tarea, no la actividad.
+- **Líneas:** las mismas que las del agente principal (ver «Cada agente en líneas»): la cabecera (marca de estado, nombre, modelo y esfuerzo), la tarea delegada, la actividad, la línea de estado (etiqueta, tiempo y tokens) con la barra al final. La barra **nunca lleva porcentaje**: se mueve mientras el subagente trabaja o te espera y desaparece al terminar (el color y la etiqueta de estado dicen cómo acabó). De un subagente terminado se ve la tarea, no la actividad.
 - **Modelo y esfuerzo:** junto al nombre, atenuados (`Explore · haiku · low`). Salen de `turn.step` (cada petición al modelo, del agente principal o de un subagente por su `agentId`); antes de la primera petición de un subagente se muestra el modelo que dio su spawn. El id se acorta (`claude-opus-4-5-20251101` es `opus-4-5`; un alias como `haiku` queda igual). Si el modelo no admite esfuerzo, solo se ve el modelo; si aún no se sabe nada, nada.
 - **Tokens:** ver «Tokens» más abajo.
 - **Instancias independientes:** dos ejecuciones del mismo agente son dos entradas, con su tiempo y su estado propios.

@@ -674,8 +674,11 @@ export const register: Register = on => {
       </Box>
     )
 
-    /** The status line of an agent or of a turn: its status word in its colour, then the tasks done (the main agent's), the time and the tokens, dim, separated by `·`. */
-    const statusLine = (status: SubagentStatus, label: string, fields: string[]) => (
+    /**
+     * The status line of an agent or of a turn: its status word in its colour, then the tasks done (the main agent's), the time and the tokens, dim, separated by `·`,
+     * and, at its end, the agent's one bar (`bar`): the moving block while it is at work, nothing for a finished agent or a turn. Never a percentage.
+     */
+    const statusLine = (status: SubagentStatus, label: string, fields: string[], bar: string | null = null) => (
       <Box>
         <Box flexShrink={0}>
           <Text color={SUBAGENT_TONE[status]}>{label}</Text>
@@ -685,16 +688,13 @@ export const register: Register = on => {
             {` · ${fields.join(' · ')}`}
           </Text>
         </Box>
+        {bar === null ? null : (
+          <Box flexShrink={0} marginLeft={2}>
+            <Text color={barColor(status)}>{bar}</Text>
+          </Box>
+        )}
       </Box>
     )
-
-    /** An agent's one bar, in its own line under the status: the moving block while it is at work; a finished agent has none. Never a percentage. */
-    const barLine = (row: PaneRow) =>
-      row.bar === null ? null : (
-        <Text wrap="truncate-end" color={barColor(row.status)}>
-          {row.bar}
-        </Text>
-      )
 
     /** The main agent's checklist: a mark and a name per task, nothing else (no bar, no label). */
     const checklist = (tasks: PaneCurrent['tasks']) => (
@@ -718,7 +718,7 @@ export const register: Register = on => {
 
     /**
      * An agent in lines, one under the other: its head line and, two columns in, what it was asked (`task`), what it does now (`activity`, only while at work),
-     * its status line, its bar (only while at work) and, for the main agent, its checklist (`after`).
+     * its status line with its bar at the end (only while at work) and, for the main agent, its checklist (`after`).
      */
     const agentBlock = (row: PaneRow, task: string | null, activity: string | null, after: ReturnType<typeof checklist> | null = null) => (
       <Box flexDirection="column">
@@ -726,8 +726,7 @@ export const register: Register = on => {
         <Box flexDirection="column" paddingLeft={2}>
           {task === null ? null : noteLine(task)}
           {activity === null ? null : noteLine(activity)}
-          {statusLine(row.status, row.label, statusFields(row, t))}
-          {barLine(row)}
+          {statusLine(row.status, row.label, statusFields(row, t), row.bar)}
           {after}
         </Box>
       </Box>

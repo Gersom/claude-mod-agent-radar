@@ -611,7 +611,7 @@ test('a turn shows its title, its time and the working line in the pane, on both
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await paneView($, 60, surface)
 
-    // The turn's title, then the main agent in lines: its head, its status line, its bar and the one line that says it works.
+    // The turn's title, then the main agent in lines: its head, its status line with its bar at the end and the one line that says it works.
     expect(await paneLines(ui)).toEqual([
       '● Current run · 0s',
       '______________________________',
@@ -619,8 +619,7 @@ test('a turn shows its title, its time and the working line in the pane, on both
       'Build my landing page',
       '',
       '● Main agent',
-      '  Working · 0s',
-      '  ███░░░░░░░',
+      '  Working · 0s  ███░░░░░░░',
       '  ▶ Working on your request',
       '',
       'History',
@@ -636,7 +635,7 @@ test('a turn shows its title, its time and the working line in the pane, on both
   const ui = await paneView($)
 
   expect((await paneLines(ui))[0]).toBe('● Current run · 2m 35s')
-  expect((await paneLines(ui))[6]).toBe('  Working · 2m 35s')
+  expect((await paneLines(ui))[6]).toBe('  Working · 2m 35s  ███░░░░░░░')
   await ui.unmount()
 })
 
@@ -716,13 +715,12 @@ test('TodoWrite appears as the checklist in the pane, and the call goes through 
   expect(await ui.find({ type: 'Text', text: /^✓$/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /^▶$/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /^○$/ })).toBeDefined()
-  // A task is its mark and its name: no bar of its own and no label of its status (the only bar is the main agent's, in its own line).
+  // A task is its mark and its name: no bar of its own and no label of its status (the only bar is the main agent's, at the end of its status line).
   expect(await ui.findAll({ type: 'Text', text: /[█░]/ })).toHaveLength(1)
   expect(await ui.find({ type: 'Text', text: /^(Done|Next)\s*$/ })).toBeUndefined()
-  expect((await paneLines(ui)).slice(5, 11)).toEqual([
+  expect((await paneLines(ui)).slice(5, 10)).toEqual([
     '● Main agent',
-    '  Working · 1/3 · 0s',
-    '  ███░░░░░░░',
+    '  Working · 1/3 · 0s  ███░░░░░░░',
     '  ✓ Analyze project structure',
     '  ▶ Implement authentication',
     '  ○ Run final tests'
@@ -959,7 +957,7 @@ test('turn events pass through with their answer as it is', async ($, on) => {
   expect(await finish($)).toEqual({ text: 'done' })
 })
 
-test('with little width the pane keeps its lines and the agent bar, and cuts the names to fit', async ($, on) => {
+test('with little width the pane keeps its lines and the agent bar at the end of its status line, and cuts the names to fit', async ($, on) => {
   radar(on)
   on('tool.call', () => answered({ oldTodos: [], newTodos: [] }))
 
@@ -983,8 +981,7 @@ test('with little width the pane keeps its lines and the agent bar, and cuts the
   const wide = await lines(60)
 
   expect(withoutRules(narrow.lines)).toEqual(withoutRules(wide.lines))
-  expect(narrow.lines).toContain('  ███░░░░░░░')
-  expect(narrow.lines).toContain('  Working · 0/2 · 0s')
+  expect(narrow.lines).toContain('  Working · 0/2 · 0s  ███░░░░░░░')
   expect(narrow.name?.props?.wrap).toBe('truncate-end')
 })
 
@@ -1024,7 +1021,7 @@ test('while OFF the timer does not run, and ON with the pane opened in the middl
 
   const pane = await paneView($)
 
-  expect(await paneLines(pane)).toContain('  Working · 10s')
+  expect(await paneLines(pane)).toContain('  Working · 10s  ███░░░░░░░')
   expect(await pane.find({ type: 'Text', text: /^███░░░░░░░$/ })).toBeDefined()
 
   await clock.advance(250)
@@ -1357,15 +1354,13 @@ test('a spawn goes through untouched and the subagent shows in the pane in lines
     'Build my landing page',
     '',
     '● Main agent',
-    '  Working · 1m 20s',
-    '  ███░░░░░░░',
+    '  Working · 1m 20s  ███░░░░░░░',
     '  ▶ Working on your request',
     '',
     'Subagents · 1 active',
     '  ● frontend-developer · m',
     '    Building login components',
-    '    Working · 1m 20s',
-    '    ███░░░░░░░',
+    '    Working · 1m 20s  ███░░░░░░░',
     '',
     'History',
     '______________________________',
@@ -1403,23 +1398,21 @@ test('two parallel subagents with the same name are kept apart', async ($, on) =
   const ui = await mount($)
 
   expect(await ui.findAll({ type: 'Text', text: /^code-reviewer$/ })).toHaveLength(2)
-  // Each with its own task, time and bar, a blank row between them.
-  expect(blockOf(await paneLines(ui), /^Subagents/, 10)).toEqual([
+  // Each with its own task, time and bar (at the end of its status line), a blank row between them.
+  expect(blockOf(await paneLines(ui), /^Subagents/, 8)).toEqual([
     'Subagents · 2 active',
     '  ● code-reviewer · m',
     '    Reviewing the auth module',
-    '    Working · 30s',
-    '    ███░░░░░░░',
+    '    Working · 30s  ███░░░░░░░',
     '',
     '  ● code-reviewer · m',
     '    Reviewing the billing module',
-    '    Working · 0s',
-    '    ███░░░░░░░'
+    '    Working · 0s  ███░░░░░░░'
   ])
 
   // Finishing one leaves the other working; the finished one stays in the run, done, with its time frozen and no bar.
   await finish($, 'answer', 'a1')
-  expect(blockOf(await paneLines(ui), /^Subagents/, 9)).toEqual([
+  expect(blockOf(await paneLines(ui), /^Subagents/, 8)).toEqual([
     'Subagents · 1 active',
     '  ✓ code-reviewer · m',
     '    Reviewing the auth module',
@@ -1427,8 +1420,7 @@ test('two parallel subagents with the same name are kept apart', async ($, on) =
     '',
     '  ● code-reviewer · m',
     '    Reviewing the billing module',
-    '    Working · 0s',
-    '    ███░░░░░░░'
+    '    Working · 0s  ███░░░░░░░'
   ])
   expect(await ui.findAll({ type: 'Text', text: /^code-reviewer$/ })).toHaveLength(2)
   await ui.unmount()
@@ -1443,35 +1435,31 @@ test('the activity follows the tools of that subagent only', async ($, on) => {
 
   const ui = await mount($)
 
-  // No subagent has made a call yet: none has an activity line, only its task, status and bar.
-  expect(blockOf(await paneLines(ui), /^Subagents/, 10)).toEqual([
+  // No subagent has made a call yet: none has an activity line, only its task, status and bar (at the end of its status line).
+  expect(blockOf(await paneLines(ui), /^Subagents/, 8)).toEqual([
     'Subagents · 2 active',
     '  ● one · m',
     '    Task one',
-    '    Working · 0s',
-    '    ███░░░░░░░',
+    '    Working · 0s  ███░░░░░░░',
     '',
     '  ● two · m',
     '    Task two',
-    '    Working · 0s',
-    '    ███░░░░░░░'
+    '    Working · 0s  ███░░░░░░░'
   ])
 
   // The activity goes under the task of the one that called, and only of it.
   await $.tool.call({ tool: 'Read', file_path: '/secret/file.ts', agentId: 'a1' } as never)
   expect(await ui.findAll({ type: 'Text', text: /^Reading project files$/ })).toHaveLength(1)
-  expect(blockOf(await paneLines(ui), /^Subagents/, 11)).toEqual([
+  expect(blockOf(await paneLines(ui), /^Subagents/, 9)).toEqual([
     'Subagents · 2 active',
     '  ● one · m',
     '    Task one',
     '    Reading project files',
-    '    Working · 0s',
-    '    ███░░░░░░░',
+    '    Working · 0s  ███░░░░░░░',
     '',
     '  ● two · m',
     '    Task two',
-    '    Working · 0s',
-    '    ███░░░░░░░'
+    '    Working · 0s  ███░░░░░░░'
   ])
 
   await $.tool.call({ tool: 'Bash', command: 'npm test -- /secret/dir', agentId: 'a1' } as never)
@@ -1666,12 +1654,11 @@ test('a narrow pane keeps every line of a subagent and cuts its name and task wi
 
     // The same lines at every width: no field is dropped, the name, the model and the task are cut by the text itself.
     expect(withoutRules(await paneLines(narrow))).toEqual(withoutRules(lines))
-    expect(blockOf(lines, /^Subagents/, 6)).toEqual([
+    expect(blockOf(lines, /^Subagents/, 5)).toEqual([
       'Subagents · 1 active',
       '  ● a-very-long-custom-agent-name-for-the-frontend · m',
       '    A long delegated task that goes on and on',
-      '    Working · 0s',
-      '    ███░░░░░░░',
+      '    Working · 0s  ███░░░░░░░',
       ''
     ])
 
@@ -1689,7 +1676,7 @@ test('a narrow pane keeps every line of a subagent and cuts its name and task wi
   }
 })
 
-test('a subagent that waits for the person keeps its one bar, in yellow, under its Needs you status', async ($, on) => {
+test('a subagent that waits for the person keeps its one bar, in yellow, at the end of its Needs you status line', async ($, on) => {
   squad(on, 'a1')
   on('tool.check', () => ({ decision: 'ask' }) as never)
 
@@ -1699,7 +1686,7 @@ test('a subagent that waits for the person keeps its one bar, in yellow, under i
 
   const ui = await mount($)
 
-  expect(blockOf(await paneLines(ui), /^Subagents/, 5)).toEqual(['Subagents · 1 active', '  ● one · m', '    Task one', '    Needs you · 0s', '    ███░░░░░░░'])
+  expect(blockOf(await paneLines(ui), /^Subagents/, 4)).toEqual(['Subagents · 1 active', '  ● one · m', '    Task one', '    Needs you · 0s  ███░░░░░░░'])
   // The main agent's bar is blue (it works) and the subagent's yellow; the status word has the same yellow.
   expect((await ui.findAll({ type: 'Text', text: /[█░]/ })).map((bar: { props?: { color?: string } }) => bar.props?.color)).toEqual(['#38bdf8', '#facc15'])
   expect((await ui.find({ type: 'Text', text: /^Needs you$/ }))?.props?.color).toBe('#facc15')
@@ -2413,18 +2400,17 @@ test('the timer stops when nothing is left to move', async ($, on) => {
   await opener.unmount()
 })
 
-test('a subagent with no task and no tool seen has only its head, its status and its bar', async ($, on) => {
+test('a subagent with no task and no tool seen has only its head and its status line with its bar at the end', async ($, on) => {
   squad(on, 'a1')
   await begin($)
   await spawn($, 'Explore', '')
 
   const ui = await mount($)
 
-  expect(blockOf(await paneLines(ui), /^Subagents/, 5)).toEqual([
+  expect(blockOf(await paneLines(ui), /^Subagents/, 4)).toEqual([
     'Subagents · 1 active',
     '  ● Explore · m',
-    '    Working · 0s',
-    '    ███░░░░░░░',
+    '    Working · 0s  ███░░░░░░░',
     ''
   ])
   await ui.unmount()
@@ -2833,17 +2819,16 @@ test('the pane draws the turn, the whole checklist, the subagents at work and th
 
   const ui = await paneView($)
 
-  // The main agent with its checklist (a mark and a name per task), then the subagents of the turn: the one at work with its task, activity, status and bar,
+  // The main agent with its checklist (a mark and a name per task), then the subagents of the turn: the one at work with its task, activity and status line with its bar at the end,
   // the child two columns further in under its parent, and the finished one, which stays in the run with its final state and no bar. A blank row between agents.
-  expect((await paneLines(ui)).slice(0, 28)).toEqual([
+  expect((await paneLines(ui)).slice(0, 25)).toEqual([
     '● Current run · 45s',
     '______________________________',
     '',
     'Build my landing page',
     '',
     '● Main agent',
-    '  Working · 1/3 · 45s',
-    '  ███░░░░░░░',
+    '  Working · 1/3 · 45s  ███░░░░░░░',
     '  ✓ Analyze project structure',
     '  ▶ Implement authentication',
     '  ○ Run final tests',
@@ -2852,13 +2837,11 @@ test('the pane draws the turn, the whole checklist, the subagents at work and th
     '  ● frontend-developer · m',
     '    Building the login components',
     '    Reading project files',
-    '    Working · 45s',
-    '    ███░░░░░░░',
+    '    Working · 45s  ███░░░░░░░',
     '',
     '    ● backend-developer · m',
     '      Reviewing authentication routes',
-    '      Working · 45s',
-    '      ███░░░░░░░',
+    '      Working · 45s  ███░░░░░░░',
     '',
     '  ✗ code-reviewer · m',
     '    Reviewing the diff',
@@ -2878,7 +2861,7 @@ test('the pane draws the turn, the whole checklist, the subagents at work and th
   // However long it goes on, the finished one is still in the run.
   await clock.advance(10 * MS)
   expect(await ui.find({ type: 'Text', text: /^code-reviewer$/ })).toBeDefined()
-  expect((await paneLines(ui)).slice(24, 27)).toEqual(['  ✗ code-reviewer · m', '    Reviewing the diff', '    Failed · 45s'])
+  expect((await paneLines(ui)).slice(21, 24)).toEqual(['  ✗ code-reviewer · m', '    Reviewing the diff', '    Failed · 45s'])
   await ui.unmount()
 })
 
@@ -3140,8 +3123,8 @@ test('the hook on turn.step records the model, the effort and the tokens of the 
   expect(lines).toContain('● Main agent · opus-4-5 · high')
   expect(lines).toContain('  ● Explore · haiku · low')
   // 1 234 for each of the two agents: 2.5k in all (2 468). The figures come with their unit, in the status line of each.
-  expect(lines).toContain('  Working · 0s · 1.2k tokens')
-  expect(lines).toContain('    Working · 0s · 1.2k tokens')
+  expect(lines).toContain('  Working · 0s · 1.2k tokens  ███░░░░░░░')
+  expect(lines).toContain('    Working · 0s · 1.2k tokens  ███░░░░░░░')
   expect(lines[0]).toBe('● Current run · 0s · 2.5k tokens')
   await view.unmount()
 })
@@ -3365,7 +3348,7 @@ test('the hook on turn.step adds up the tokens of the main agent, of a subagent 
   const running = await paneLines(ui)
 
   expect(running).toContain('  Done · 0s · 230 tokens')
-  expect(running).toContain('    Working · 3m 36s · 250 tokens')
+  expect(running).toContain('    Working · 3m 36s · 250 tokens  ███░░░░░░░')
   // The model and effort of the early request reached the subagent too.
   expect(running).toContain('  ● frontend-developer · opus-4-5 · high')
   await ui.unmount()
@@ -3465,21 +3448,18 @@ test('the pane draws the heading, the total time and tokens, the active count an
         'Build my landing page',
         '',
         `● ${w.main} · opus-4-5 · high`,
-        `  ${w.working} · 3m 36s · 230 tokens`,
-        '  ███░░░░░░░',
+        `  ${w.working} · 3m 36s · 230 tokens  ███░░░░░░░`,
         `  ▶ ${w.request}`,
         '',
         w.subagents,
         '  ● frontend-developer · opus-4-5 · high',
         '    Building the login components',
         `    ${w.reading}`,
-        `    ${w.working} · 3m 36s · 1.2k tokens`,
-        '    ███░░░░░░░',
+        `    ${w.working} · 3m 36s · 1.2k tokens  ███░░░░░░░`,
         '',
         '    ● backend-developer · opus-4-5 · high',
         '      Reviewing authentication routes',
-        `      ${w.working} · 3m 36s · 18.4k tokens`,
-        '      ███░░░░░░░',
+        `      ${w.working} · 3m 36s · 18.4k tokens  ███░░░░░░░`,
         '',
         w.history,
         '______________________________',
@@ -3546,7 +3526,7 @@ test('the heading dot pulses with the timer while anything runs, and stands stil
   await opener.unmount()
 })
 
-test('a narrow pane keeps the tokens, the status words and the bar: only the names, the tasks and the underlines are cut to the width', async ($, on) => {
+test('a narrow pane keeps the tokens, the status words and the bar at the end of the status line: only the names, the tasks and the underlines are cut to the width', async ($, on) => {
   squad(on, 'a1')
 
   let usage: object | null = usageOf(200, 26, 4)
@@ -3567,8 +3547,7 @@ test('a narrow pane keeps the tokens, the status words and the bar: only the nam
 
   await wide.unmount()
   // No threshold of width: the fields and the bar are there at 60 columns, and they are at 24 and 40 too.
-  expect(lines).toContain('  Working · 0s · 230 tokens')
-  expect(lines).toContain('  ███░░░░░░░')
+  expect(lines).toContain('  Working · 0s · 230 tokens  ███░░░░░░░')
   expect(lines).toContain('    Done · 0s · 230 tokens')
   expect(lines[0]).toBe('● Current run · 0s · 460 tokens')
 
