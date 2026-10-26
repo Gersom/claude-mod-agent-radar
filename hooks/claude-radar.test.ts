@@ -763,7 +763,8 @@ test('a turn that ends is archived: the pane says it is ready and the history ha
   expect(await ui.find({ type: 'Text', text: /^All done, ready for more instructions$/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /^Implement$/ })).toBeUndefined()
   // The group: title, final state and duration; the main agent with its tasks done.
-  expect(await ui.find({ type: 'Text', text: /^History \(1 run\)$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^ \(1 run\)$/ })).toMatchObject({ props: { dimColor: true } })
+  // The count is dim, right after the title and not at the right edge.
   expect(await ui.find({ type: 'Text', text: /^Build my landing page$/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /^Done$/ })).toBeDefined()
   expect(await ui.findAll({ type: 'Text', text: /^3m 10s$/ })).toHaveLength(2)
@@ -791,7 +792,7 @@ test('a stopped, failed or refused turn goes to the history with its final state
 
   const ui = await paneView($)
 
-  expect(await ui.find({ type: 'Text', text: /^History \(3 runs\)$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^ \(3 runs\)$/ })).toBeDefined()
   expect(await ui.findAll({ type: 'Text', text: /^Failed$/ })).toHaveLength(2)
   expect(await ui.findAll({ type: 'Text', text: /^Stopped$/ })).toHaveLength(1)
   expect(await ui.findAll({ type: 'Text', text: /^✗$/ })).toHaveLength(4)
@@ -1616,7 +1617,7 @@ test('with settings.language in Spanish the band and the pane speak Spanish, nam
   const archived = await paneView($)
 
   expect(await archived.find({ type: 'Text', text: /^Todo listo, esperando instrucciones$/ })).toBeDefined()
-  expect(await archived.find({ type: 'Text', text: /^Historial \(1 ejecución\)$/ })).toBeDefined()
+  expect(await archived.find({ type: 'Text', text: /^ \(1 ejecución\)$/ })).toBeDefined()
   expect(await archived.findAll({ type: 'Text', text: /^Hecho$/ })).toHaveLength(2)
   expect(await archived.findAll({ type: 'Text', text: /^Falló$/ })).toHaveLength(1)
   expect(await archived.find({ type: 'Text', text: /^Reviewing the diff$/ })).toBeDefined()
@@ -2786,7 +2787,7 @@ test('the history groups each turn: its title, final state and duration, the mai
 
   const ui = await paneView($)
 
-  expect(await ui.find({ type: 'Text', text: /^History \(2 runs\)$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^ \(2 runs\)$/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /^All done, ready for more instructions$/ })).toBeDefined()
 
   // Most recent first.
@@ -3219,8 +3220,8 @@ test('the pane draws the heading, the total time and tokens, the active count, t
   })
 
   const words = {
-    English: { run: /^Current run$/, total: /^Total time · 3m 36s · 19\.9k tokens$/, subagents: /^Subagents$/, active: /^2 active$/, runs: /^History \(1 run\)$/, none: /^No finished turns yet$/, reading: /^Reading project files$/ },
-    Español: { run: /^Ejecución actual$/, total: /^Tiempo total · 3m 36s · 19\.9k tokens$/, subagents: /^Subagentes$/, active: /^2 activos$/, runs: /^Historial \(1 ejecución\)$/, none: /^Aún no hay turnos terminados$/, reading: /^Leyendo archivos del proyecto$/ }
+    English: { run: /^Current run$/, total: /^Total time · 3m 36s · 19\.9k tokens$/, subagents: /^Subagents$/, active: /^2 active$/, runs: /^ \(1 run\)$/, none: /^No finished turns yet$/, reading: /^Reading project files$/ },
+    Español: { run: /^Ejecución actual$/, total: /^Tiempo total · 3m 36s · 19\.9k tokens$/, subagents: /^Subagentes$/, active: /^2 activos$/, runs: /^ \(1 ejecución\)$/, none: /^Aún no hay turnos terminados$/, reading: /^Leyendo archivos del proyecto$/ }
   }
 
   for (const [round, lang] of (['English', 'Español'] as const).entries()) {
@@ -3377,8 +3378,8 @@ test('each section title has a faint line under it, as long as the title', async
     const ui = await paneView($, 40, surface)
     const lines = await ui.findAll({ type: 'Text', text: /^_+$/ })
 
-    // One under «Current run», one under «History»: each as long as its title.
-    expect(lines.map((line: { text: string }) => line.text.length)).toEqual(['Current run'.length, 'History'.length])
+    // One under «Current run», one under «History»: the same length, longer than either title.
+    expect(lines.map((line: { text: string }) => line.text.length)).toEqual([30, 30])
 
     for (const line of lines) {
       expect(line.props?.wrap).toBe('truncate-end')

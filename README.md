@@ -34,7 +34,7 @@ Con el radar en `ON` y Claude trabajando (en inglés, el idioma por defecto; ver
 
 ```text
 ● Current run                         Total time · 3m 36s · 19.8k tokens
-___________
+______________________________
 
 Build my landing page
 ● Main agent · opus-4-5 · high    Working   3m 36s   230  ███░░░░░░░
@@ -53,7 +53,7 @@ Build my landing page
       Working
 
 History (2 runs)
-________________
+______________________________
 
 ✗ Fix the login bug              Failed   4m 02s   9.8k tokens
   ✗ Main agent · opus-4-5 · high    1/2   4m 02s         6k
@@ -115,7 +115,7 @@ Claude Radar                         [ ◧ Detalle ] [ ● Claude Radar: ON ] [ 
 
 ```text
 ● Ejecución actual                 Tiempo total · 3m 36s · 19.8k tokens
-________________
+______________________________
 
 Build my landing page
 ● Agente principal · opus-4-5 · high  Trabajando  3m 36s  230  ███░░░░░░░
@@ -130,7 +130,7 @@ Build my landing page
     Leyendo archivos del proyecto
 
 Historial (2 ejecuciones)
-_________________________
+______________________________
 
 ✗ Fix the login bug              Falló    4m 02s   9.8k tokens
   ✗ Agente principal · opus-4-5 · high  1/2  4m 02s        6k
@@ -142,7 +142,7 @@ Sin nada en marcha, la ejecución actual dice `Todo listo, esperando instruccion
 
 ## Qué muestra el panel
 
-Sin límite de filas (el motor lo desplaza); todo se trunca con `…` al ancho del panel. Dos secciones, separadas por una fila en blanco (sin línea); cada título lleva debajo una línea de guiones bajos (`_`, atenuada) tan larga como el propio título, que lo separa de su contenido, desde el inicio de la línea, y una fila en blanco debajo. Las líneas finas que quedan, dentro de la ejecución actual, son `─` atenuadas y cortadas al ancho (el kit de dibujo no permite un borde de un solo lado, así que son un `Text`):
+Sin límite de filas (el motor lo desplaza); todo se trunca con `…` al ancho del panel. Dos secciones, separadas por una fila en blanco (sin línea); cada título lleva debajo una línea de guiones bajos (`_`, atenuada, de 30 columnas: igual de larga en las dos secciones, y más que cualquier título), desde el inicio de la fila, que lo separa de su contenido, y una fila en blanco debajo. El contador del historial (`(2 runs)`) va en gris, pegado al título. Las líneas finas que quedan, dentro de la ejecución actual, son `─` atenuadas y cortadas al ancho (el kit de dibujo no permite un borde de un solo lado, así que son un `Text`):
 
 - **Current run** (ejecución actual): el turno en curso.
   - **Encabezado:** a la izquierda `●` y el título de la sección; a la derecha el tiempo total del turno y sus tokens (`Total time · 3m 36s · 19.8k tokens`; los tokens solo si los hay y el panel es ancho). El `●` es verde y parpadea con el temporizador mientras algo corre (amarillo si alguien te espera); cuando todo terminó queda quieto y atenuado con la marca del final (`✓`, `✗` o `■`), cosa que casi no se ve porque el turno se archiva en ese momento. Sin turno en curso, el `●` va atenuado.
