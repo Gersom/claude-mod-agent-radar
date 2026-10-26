@@ -4,12 +4,6 @@ import type { EngineInterface, Register } from 'claude-code'
 import type { ClaudeRadarState, Lang, ModelInfo, SubagentStatus } from '../types'
 
 import {
-  PANE_COLUMNS,
-  PANE_ID,
-  PANE_ROWS,
-  STATUS_MIN_COLUMNS,
-  TICK_MS,
-  TOKENS_MIN_COLUMNS,
   activityOf,
   addTask,
   addTokens,
@@ -26,22 +20,28 @@ import {
   initialState,
   isLive,
   layoutOf,
+  PANE_COLUMNS,
+  PANE_ID,
+  PANE_ROWS,
   paneButtonLabel,
   paneOf,
   resetSession,
   resumeWork,
   settleTurn,
   spawnSubagent,
-  stepModel,
   startTurn,
+  STATUS_MIN_COLUMNS,
+  stepModel,
   taskIdOf,
+  TICK_MS,
+  TOKENS_MIN_COLUMNS,
   tokensOf,
   updateTask,
   workSubagent,
   writeTodos
 } from './claude-radar'
 import type { PaneCurrent, PaneRow, PaneTurn } from './claude-radar'
-import { NAME, detectLang, textsOf } from './i18n'
+import { detectLang, NAME, textsOf } from './i18n'
 
 /** The key of `$.store` that keeps the ON/OFF choice between sessions. */
 const STORE_KEY = 'enabled'
@@ -51,11 +51,11 @@ const BAND_KEY = 'bandHidden'
 
 /** The colour of the pane's phase label by phase; `undefined` leaves the default. */
 const TONE = {
-  working: undefined,
+  done: '#22c55e',
   needsYou: '#facc15',
-  stuck: '#ef4444',
   stopped: '#fb923c',
-  done: '#22c55e'
+  stuck: '#ef4444',
+  working: undefined
 } as const
 
 /** The character of the faint line under a section's title, and how long it is: the same for every section, longer than any title (the pane's width cuts it if narrower). */
@@ -67,30 +67,30 @@ const ACTIVE = '#38bdf8'
 
 /** The colour of a subagent's mark and status label. */
 const SUBAGENT_TONE = {
-  working: GREEN,
-  needsYou: '#facc15',
   done: GREEN,
   failed: '#ef4444',
-  stopped: '#fb923c'
+  needsYou: '#facc15',
+  stopped: '#fb923c',
+  working: GREEN
 } as const
 
 /** The colour of a status bar: the moving one in blue, a finished one in its status colour. */
 const barColor = (status: SubagentStatus) => (status === 'working' ? ACTIVE : SUBAGENT_TONE[status])
 
 /** The radar's state: what the band and the pane draw from. */
-const radar = atom({ plugin: 'agent-radar', key: 'claudeRadarState' } as const, initialState())
+const radar = atom({ key: 'claudeRadarState', plugin: 'agent-radar' } as const, initialState())
 
 /** Whether the tool rows are hidden: the one value the transcript's rows read, so they redraw when it flips and not on every tick of the state. */
-const hideTools = atom({ plugin: 'agent-radar', key: 'claudeRadarHidesTools' } as const, false)
+const hideTools = atom({ key: 'claudeRadarHidesTools', plugin: 'agent-radar' } as const, false)
 
 /** Whether the detail pane is open: set when the button opens it, cleared when it closes, whoever closes it. */
-const paneOpen = atom({ plugin: 'agent-radar', key: 'claudeRadarPaneOpen' } as const, false)
+const paneOpen = atom({ key: 'claudeRadarPaneOpen', plugin: 'agent-radar' } as const, false)
 
 /** Whether the band is taken off the prompt: only the drawing of the band goes, the pane and the hidden tool rows follow ON/OFF as ever. */
-const bandHidden = atom({ plugin: 'agent-radar', key: 'claudeRadarBandHidden' } as const, false)
+const bandHidden = atom({ key: 'claudeRadarBandHidden', plugin: 'agent-radar' } as const, false)
 
 /** The radar's language, settled from settings.language the first time (and again in a new session); `null` until then. */
-const langMode = atom({ plugin: 'agent-radar', key: 'claudeRadarLang' } as const, null as Lang | null)
+const langMode = atom({ key: 'claudeRadarLang', plugin: 'agent-radar' } as const, null as Lang | null)
 
 /** The language settings.language names; the default when the settings cannot be read or name none the radar has. */
 const readLang = async ($: EngineInterface) => {
@@ -238,7 +238,7 @@ const closePane = async ($: EngineInterface) => {
  * at any width. Resolves `null` once it is on screen, or the engine's reason when this surface places no panes; nothing is left waiting then.
  */
 const openPane = async ($: EngineInterface) => {
-  const opened = await $.ui.open({ id: PANE_ID, title: NAME, rows: PANE_ROWS, columns: PANE_COLUMNS })
+  const opened = await $.ui.open({ id: PANE_ID, columns: PANE_COLUMNS, rows: PANE_ROWS, title: NAME })
 
   if (opened.isPlaced) {
     await setPaneOpen($, true)
@@ -301,9 +301,9 @@ export const register: Register = on => {
     radarIsOn = (await read($, radar)).claudeRadarEnabled
 
     await $.command.register({
-      name: 'agent-radar',
+      argumentHint: '[open|close|hide|show]',
       description: (await textsFor($)).commandDescription,
-      argumentHint: '[open|close|hide|show]'
+      name: 'agent-radar'
     })
 
     return next(e)
@@ -395,7 +395,7 @@ export const register: Register = on => {
 
       earlySteps.delete(id)
       await change($, state => {
-        const spawned = spawnSubagent(state, { id, name: e.subagentType, task: e.description, parentId: e.parentAgentId, model }, time)
+        const spawned = spawnSubagent(state, { id, model, name: e.subagentType, parentId: e.parentAgentId, task: e.description }, time)
 
         // Requests that came before the spawn was answered are applied now: the model and effort, and the tokens.
         return early === undefined ? spawned : addTokens(stepModel(spawned, id, early.info), id, early.tokens)
@@ -409,7 +409,7 @@ export const register: Register = on => {
   // Each model request names the model and the effort it runs with, and, once answered, what it cost: the main agent's, or a subagent's
   // (`agentId`). The turn's own `usage` (turn.complete) is not read: the steps already add up to it. Observe only: the result goes up as it came.
   on('turn.step', async function* ($, e, next) {
-    const info = { model: e.model, effort: e.effort === undefined ? null : String(e.effort) }
+    const info = { effort: e.effort === undefined ? null : String(e.effort), model: e.model }
     const id = e.agentId
 
     if (isFollowed(await read($, radar), id)) {
@@ -638,8 +638,8 @@ export const register: Register = on => {
       </Box>
     )
 
-    /** A section's title, with an optional dim note right after it (the count of the history) and an optional figure at the right, a mark before it, and a faint line under it, the same length for every section, that sets it apart from its content. */
-    const heading = (mark: ReturnType<typeof markCell> | null, title: string, figure?: string, note?: string) => (
+    /** A section's title, `<title> · <subtitle>`: the title in bold and the subtitle (the time and tokens of the run, the count of the history) dim right after it, with a mark before it, and a faint line under it, the same length for every section, that sets it apart from its content. */
+    const heading = (mark: ReturnType<typeof markCell> | null, title: string, subtitle?: string) => (
       <Box flexDirection="column" marginBottom={1}>
         <Box>
           {mark}
@@ -647,19 +647,12 @@ export const register: Register = on => {
             <Text wrap="truncate-end" bold>
               {title}
             </Text>
-            {note === undefined ? null : (
+            {subtitle === undefined ? null : (
               <Text wrap="truncate-end" dimColor>
-                {` ${note}`}
+                {` · ${subtitle}`}
               </Text>
             )}
           </Box>
-          {figure === undefined ? null : (
-            <Box flexShrink={1} marginLeft={2}>
-              <Text wrap="truncate-end" dimColor>
-                {figure}
-              </Text>
-            </Box>
-          )}
         </Box>
         <Box>
           <Text wrap="truncate-end" dimColor>
@@ -671,9 +664,9 @@ export const register: Register = on => {
 
     /** The right side of an agent line, which never shrinks: the status label (in its colour), the time, the tokens and, if `withBar`, the status bar. Each drops out when the pane is too narrow for it. */
     const cells = (
-      fields: { status: SubagentStatus; time: string; tokens: string | null; bar: string },
+      fields: { bar: string; status: SubagentStatus; time: string; tokens: string | null },
       widths: { time: number; tokens: number },
-      label: { text: string; color?: string },
+      label: { color?: string; text: string },
       withBar: boolean
     ) => (
       <Box flexShrink={0}>
@@ -738,7 +731,7 @@ export const register: Register = on => {
     const runHeading = (current: PaneCurrent | null) => {
       if (current === null) return heading(markCell('●', undefined, true), t.currentRun)
 
-      const total = [`${t.totalTime} · ${current.time}`, ...(current.tokens !== null && showTokens ? [`${current.tokens} ${t.tokens}`] : [])].join(' · ')
+      const total = [current.time, ...(current.tokens !== null && showTokens ? [`${current.tokens} ${t.tokens}`] : [])].join(' · ')
 
       return heading(markCell(current.mark, current.tone === 'working' ? GREEN : TONE[current.tone], !current.isRunning || !current.isLit), t.currentRun, total)
     }
@@ -766,7 +759,7 @@ export const register: Register = on => {
             )}
           </Box>
           <Box key="leader" flexDirection="column">
-            {agentLine(current.leader, cells(current.leader, widths, { text: current.leader.label, color: SUBAGENT_TONE[current.leader.status] }, true))}
+            {agentLine(current.leader, cells(current.leader, widths, { color: SUBAGENT_TONE[current.leader.status], text: current.leader.label }, true))}
             {current.leader.tasks === null ? null : noteLine(current.leader.tasks)}
           </Box>
           <Box key="checklist" flexDirection="column" marginLeft={2}>
@@ -813,7 +806,7 @@ export const register: Register = on => {
               {current.agents.map((agent, index) => (
                 <Box key={`agent-${agent.id}`} flexDirection="column" paddingLeft={agent.depth * 2}>
                   {index === 0 ? null : rule(2 + agent.depth * 2)}
-                  {agentLine(agent, cells(agent, widths, { text: agent.label, color: SUBAGENT_TONE[agent.status] }, true))}
+                  {agentLine(agent, cells(agent, widths, { color: SUBAGENT_TONE[agent.status], text: agent.label }, true))}
                   {agent.task === null ? null : noteLine(agent.task)}
                   {agent.status === 'working' || agent.status === 'needsYou' ? noteLine(agent.activity) : null}
                 </Box>
@@ -844,13 +837,13 @@ export const register: Register = on => {
                 {turn.title}
               </Text>
             </Box>
-            {cells({ status: turn.status, time: turn.time, tokens: turnTokens(turn), bar: '' }, widths, { text: turn.label, color: SUBAGENT_TONE[turn.status] }, false)}
+            {cells({ bar: '', status: turn.status, time: turn.time, tokens: turnTokens(turn) }, widths, { color: SUBAGENT_TONE[turn.status], text: turn.label }, false)}
           </Box>
           <Box flexDirection="column" paddingLeft={2}>
             {agentLine(turn.leader, cells(turn.leader, widths, { text: turn.leader.tasks ?? '' }, false))}
             {turn.agents.map(agent => (
               <Box key={`turn-${turn.id}-${agent.id}`} flexDirection="column" paddingLeft={agent.depth * 2}>
-                {agentLine(agent, cells(agent, widths, { text: agent.label, color: SUBAGENT_TONE[agent.status] }, false))}
+                {agentLine(agent, cells(agent, widths, { color: SUBAGENT_TONE[agent.status], text: agent.label }, false))}
                 {agent.task === null ? null : noteLine(agent.task)}
               </Box>
             ))}
@@ -872,7 +865,7 @@ export const register: Register = on => {
           )}
         </Box>
         <Box key="history-block" flexDirection="column" marginTop={1}>
-          {heading(null, t.history, undefined, view.turns.length === 0 ? undefined : `(${t.runs(view.turns.length)})`)}
+          {heading(null, t.history, view.turns.length === 0 ? undefined : t.runs(view.turns.length))}
           {view.turns.length === 0 ? (
             <Text wrap="truncate-end" dimColor>
               {t.noFinished}

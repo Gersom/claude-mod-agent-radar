@@ -25,8 +25,6 @@ export type Texts = {
   nothing: string
   /** What the history says while it is empty. */
   noFinished: string
-  /** `Total time` (`Tiempo total`): the label of the current run's time, in its heading. */
-  totalTime: string
   /** `tokens`: the unit written after a figure of tokens. */
   tokens: string
   /** `Subagents` (`Subagentes`): the title of the block of the turn's subagents. */
@@ -88,7 +86,6 @@ export const TEXTS: Record<Lang, Texts> = {
     history: 'Historial',
     nothing: 'Aún no hay nada en marcha',
     noFinished: 'Aún no hay turnos terminados',
-    totalTime: 'Tiempo total',
     tokens: 'tokens',
     subagents: 'Subagentes',
     active: count => (count === 1 ? '1 activo' : `${count} activos`),
@@ -133,7 +130,6 @@ export const TEXTS: Record<Lang, Texts> = {
     history: 'History',
     nothing: 'Nothing running yet',
     noFinished: 'No finished turns yet',
-    totalTime: 'Total time',
     tokens: 'tokens',
     subagents: 'Subagents',
     active: count => `${count} active`,

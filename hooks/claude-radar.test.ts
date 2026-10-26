@@ -763,7 +763,7 @@ test('a turn that ends is archived: the pane says it is ready and the history ha
   expect(await ui.find({ type: 'Text', text: /^All done, ready for more instructions$/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /^Implement$/ })).toBeUndefined()
   // The group: title, final state and duration; the main agent with its tasks done.
-  expect(await ui.find({ type: 'Text', text: /^ \(1 run\)$/ })).toMatchObject({ props: { dimColor: true } })
+  expect(await ui.find({ type: 'Text', text: /^ · 1 run$/ })).toMatchObject({ props: { dimColor: true } })
   // The count is dim, right after the title and not at the right edge.
   expect(await ui.find({ type: 'Text', text: /^Build my landing page$/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /^Done$/ })).toBeDefined()
@@ -792,7 +792,7 @@ test('a stopped, failed or refused turn goes to the history with its final state
 
   const ui = await paneView($)
 
-  expect(await ui.find({ type: 'Text', text: /^ \(3 runs\)$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^ · 3 runs$/ })).toBeDefined()
   expect(await ui.findAll({ type: 'Text', text: /^Failed$/ })).toHaveLength(2)
   expect(await ui.findAll({ type: 'Text', text: /^Stopped$/ })).toHaveLength(1)
   expect(await ui.findAll({ type: 'Text', text: /^✗$/ })).toHaveLength(4)
@@ -1290,7 +1290,7 @@ test('a spawn goes through untouched and the subagent shows in the pane with its
   expect(await ui.find({ type: 'Text', text: /^frontend-developer$/ })).toBeDefined()
   // The main agent's time and the subagent's; the turn's is in the heading, with its label.
   expect(await ui.findAll({ type: 'Text', text: /^1m 20s$/ })).toHaveLength(2)
-  expect(await ui.find({ type: 'Text', text: /^Total time · 1m 20s$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^ · 1m 20s$/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /^Building login components$/ })).toBeDefined()
   // The main agent's status, the checklist's line, the subagent's activity and its status.
   expect(await ui.findAll({ type: 'Text', text: /^Working$/ })).toHaveLength(4)
@@ -1595,7 +1595,7 @@ test('with settings.language in Spanish the band and the pane speak Spanish, nam
     expect(await pane.find({ type: 'Text', text })).toBeDefined()
   }
   // The heading's total time and the block of the subagents, with the one still at work.
-  for (const text of [/^Tiempo total · /, /^Subagentes$/, /^1 activo$/]) {
+  for (const text of [/^ · /, /^Subagentes$/, /^1 activo$/]) {
     expect(await pane.find({ type: 'Text', text })).toBeDefined()
   }
   expect(await pane.find({ type: 'Text', text: /^Leyendo archivos del proyecto$/ })).toBeDefined()
@@ -1617,7 +1617,7 @@ test('with settings.language in Spanish the band and the pane speak Spanish, nam
   const archived = await paneView($)
 
   expect(await archived.find({ type: 'Text', text: /^Todo listo, esperando instrucciones$/ })).toBeDefined()
-  expect(await archived.find({ type: 'Text', text: /^ \(1 ejecución\)$/ })).toBeDefined()
+  expect(await archived.find({ type: 'Text', text: /^ · 1 ejecución$/ })).toBeDefined()
   expect(await archived.findAll({ type: 'Text', text: /^Hecho$/ })).toHaveLength(2)
   expect(await archived.findAll({ type: 'Text', text: /^Falló$/ })).toHaveLength(1)
   expect(await archived.find({ type: 'Text', text: /^Reviewing the diff$/ })).toBeDefined()
@@ -2787,7 +2787,7 @@ test('the history groups each turn: its title, final state and duration, the mai
 
   const ui = await paneView($)
 
-  expect(await ui.find({ type: 'Text', text: /^ \(2 runs\)$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^ · 2 runs$/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /^All done, ready for more instructions$/ })).toBeDefined()
 
   // Most recent first.
@@ -3165,7 +3165,7 @@ test('the hook on turn.step adds up the tokens of the main agent, of a subagent 
   const ui = await paneView($)
 
   // 230 for the main agent, 250 for the subagent: 480 in all.
-  expect(await ui.find({ type: 'Text', text: /^Total time · 3m 36s · 480 tokens$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^ · 3m 36s · 480 tokens$/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /^230$/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /^250$/ })).toBeDefined()
   // The model and effort of the early request reached the subagent too.
@@ -3220,8 +3220,8 @@ test('the pane draws the heading, the total time and tokens, the active count, t
   })
 
   const words = {
-    English: { run: /^Current run$/, total: /^Total time · 3m 36s · 19\.9k tokens$/, subagents: /^Subagents$/, active: /^2 active$/, runs: /^ \(1 run\)$/, none: /^No finished turns yet$/, reading: /^Reading project files$/ },
-    Español: { run: /^Ejecución actual$/, total: /^Tiempo total · 3m 36s · 19\.9k tokens$/, subagents: /^Subagentes$/, active: /^2 activos$/, runs: /^ \(1 ejecución\)$/, none: /^Aún no hay turnos terminados$/, reading: /^Leyendo archivos del proyecto$/ }
+    English: { run: /^Current run$/, total: /^ · 3m 36s · 19\.9k tokens$/, subagents: /^Subagents$/, active: /^2 active$/, runs: /^ · 1 run$/, none: /^No finished turns yet$/, reading: /^Reading project files$/ },
+    Español: { run: /^Ejecución actual$/, total: /^ · 3m 36s · 19\.9k tokens$/, subagents: /^Subagentes$/, active: /^2 activos$/, runs: /^ · 1 ejecución$/, none: /^Aún no hay turnos terminados$/, reading: /^Leyendo archivos del proyecto$/ }
   }
 
   for (const [round, lang] of (['English', 'Español'] as const).entries()) {

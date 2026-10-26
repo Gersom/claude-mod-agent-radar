@@ -33,7 +33,7 @@ El panel se organiza por **turnos**. Un turno empieza cuando le pides algo a Cla
 Con el radar en `ON` y Claude trabajando (en inglés, el idioma por defecto; ver «Idioma»):
 
 ```text
-● Current run                         Total time · 3m 36s · 19.8k tokens
+● Current run · 3m 36s · 19.8k tokens
 ______________________________
 
 Build my landing page
@@ -52,7 +52,7 @@ Build my landing page
       Reviewing authentication routes
       Working
 
-History (2 runs)
+History · 2 runs
 ______________________________
 
 ✗ Fix the login bug              Failed   4m 02s   9.8k tokens
@@ -114,7 +114,7 @@ Claude Radar                         [ ◧ Detalle ] [ ● Claude Radar: ON ] [ 
 ```
 
 ```text
-● Ejecución actual                 Tiempo total · 3m 36s · 19.8k tokens
+● Ejecución actual · 3m 36s · 19.8k tokens
 ______________________________
 
 Build my landing page
@@ -129,7 +129,7 @@ Build my landing page
     Building the login components
     Leyendo archivos del proyecto
 
-Historial (2 ejecuciones)
+Historial · 2 ejecuciones
 ______________________________
 
 ✗ Fix the login bug              Falló    4m 02s   9.8k tokens
@@ -142,15 +142,15 @@ Sin nada en marcha, la ejecución actual dice `Todo listo, esperando instruccion
 
 ## Qué muestra el panel
 
-Sin límite de filas (el motor lo desplaza); todo se trunca con `…` al ancho del panel. Dos secciones, separadas por una fila en blanco (sin línea); cada título lleva debajo una línea de guiones bajos (`_`, atenuada, de 30 columnas: igual de larga en las dos secciones, y más que cualquier título), desde el inicio de la fila, que lo separa de su contenido, y una fila en blanco debajo. El contador del historial (`(2 runs)`) va en gris, pegado al título. Las líneas finas que quedan, dentro de la ejecución actual, son `─` atenuadas y cortadas al ancho (el kit de dibujo no permite un borde de un solo lado, así que son un `Text`):
+Sin límite de filas (el motor lo desplaza); todo se trunca con `…` al ancho del panel. Dos secciones, separadas por una fila en blanco (sin línea); cada título lleva debajo una línea de guiones bajos (`_`, atenuada, de 30 columnas: igual de larga en las dos secciones, y más que cualquier título), desde el inicio de la fila, que lo separa de su contenido, y una fila en blanco debajo. Los dos títulos tienen el mismo formato, `<título> · <subtítulos>`, con los subtítulos en gris (el tiempo y los tokens del turno, o el número de ejecuciones). Las líneas finas que quedan, dentro de la ejecución actual, son `─` atenuadas y cortadas al ancho (el kit de dibujo no permite un borde de un solo lado, así que son un `Text`):
 
 - **Current run** (ejecución actual): el turno en curso.
-  - **Encabezado:** a la izquierda `●` y el título de la sección; a la derecha el tiempo total del turno y sus tokens (`Total time · 3m 36s · 19.8k tokens`; los tokens solo si los hay y el panel es ancho). El `●` es verde y parpadea con el temporizador mientras algo corre (amarillo si alguien te espera); cuando todo terminó queda quieto y atenuado con la marca del final (`✓`, `✗` o `■`), cosa que casi no se ve porque el turno se archiva en ese momento. Sin turno en curso, el `●` va atenuado.
+  - **Encabezado:** el `●` y el título de la sección, seguido de sus subtítulos en gris con el mismo formato que el historial, `<título> · <subtítulo>`: el tiempo total del turno y sus tokens (`Current run · 3m 36s · 19.8k tokens`; los tokens solo si los hay y el panel es ancho). El `●` es verde y parpadea con el temporizador mientras algo corre (amarillo si alguien te espera); cuando todo terminó queda quieto y atenuado con la marca del final (`✓`, `✗` o `■`), cosa que casi no se ve porque el turno se archiva en ese momento. Sin turno en curso, el `●` va atenuado.
   - El **título del turno** (del prompt, sin rutas ni código, de 80 caracteres como máximo y cortado por palabras; el dibujo lo corta con `…` al ancho real). Si el turno espera tu permiso o terminó con un error, la razón va a su lado, atenuada (`· Waiting for your permission`).
   - El **agente principal** (`Main agent`): su fila (ver abajo), `hechas/total` en la línea de debajo si hay checklist y, después, el checklist completo.
   - El bloque de los **subagentes del turno** (los que trabajan y los que ya terminaron), sangrado bajo el agente principal y con su jerarquía (ver «Subagentes»): un título `Subagents` con el contador de los activos a la derecha (`2 active`; en verde si hay alguno, atenuado si no) y, bajo él, una fila por agente separada de la siguiente por una línea fina.
   - Sin turno en curso: `All done, ready for more instructions`.
-- **History** (historial): el título con el número de turnos entre paréntesis, pegado al título y no alineado a la derecha (`History (2 runs)`; `History (1 run)` en singular) y un grupo por turno terminado, el más reciente primero, separados por una fila en blanco, sin líneas (ver «Historial»). Vacío: `No finished turns yet`.
+- **History** (historial): el título con el número de turnos como subtítulo en gris, pegado al título (`History · 2 runs`; `History · 1 run` en singular) y un grupo por turno terminado, el más reciente primero, separados por una fila en blanco, sin líneas (ver «Historial»). Vacío: `No finished turns yet`.
 
 Sin ningún turno, ni en curso ni terminado: `Nothing running yet`.
 

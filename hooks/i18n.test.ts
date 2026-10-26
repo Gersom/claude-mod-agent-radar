@@ -42,7 +42,7 @@ test('each language has its own texts, and a word for everything', async () => {
 
   // No text is empty, in either language.
   for (const texts of [es, en]) {
-    for (const key of ['name', 'detail', 'close', 'currentRun', 'mainAgent', 'ready', 'history', 'nothing', 'noFinished', 'totalTime', 'tokens', 'subagents', 'working', 'defaultTitle', 'workingOnIt'] as const) {
+    for (const key of ['name', 'detail', 'close', 'currentRun', 'mainAgent', 'ready', 'history', 'nothing', 'noFinished', 'tokens', 'subagents', 'working', 'defaultTitle', 'workingOnIt'] as const) {
       expect(texts[key].length).toBeGreaterThan(0)
     }
     for (const group of [texts.reason, texts.task, texts.agent, texts.activity]) {
@@ -83,9 +83,9 @@ test('the pane sections, the main agent and the ready message are put in each la
   }
 })
 
-test('the heading words: total time, tokens, subagents, how many are active and how many runs', async () => {
-  expect([en.totalTime, en.tokens, en.subagents]).toEqual(['Total time', 'tokens', 'Subagents'])
-  expect([es.totalTime, es.tokens, es.subagents]).toEqual(['Tiempo total', 'tokens', 'Subagentes'])
+test('the heading words: tokens, subagents, how many are active and how many runs', async () => {
+  expect([en.tokens, en.subagents]).toEqual(['tokens', 'Subagents'])
+  expect([es.tokens, es.subagents]).toEqual(['tokens', 'Subagentes'])
   expect([0, 1, 3].map(en.active)).toEqual(['0 active', '1 active', '3 active'])
   expect([0, 1, 3].map(es.active)).toEqual(['0 activos', '1 activo', '3 activos'])
   expect([0, 1, 6].map(en.runs)).toEqual(['0 runs', '1 run', '6 runs'])
