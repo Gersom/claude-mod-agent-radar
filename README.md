@@ -28,34 +28,39 @@ Claude Radar                         [ ◧ Detail ] [ ● Claude Radar: ON ] [ �
 
 ### El panel de detalle
 
-El panel se organiza por **turnos**. Un turno empieza cuando le pides algo a Claude y dura hasta que el agente principal **y todos sus subagentes** terminan (o hasta que lo cancelas). Arriba va la **ejecución actual**, el turno en curso; debajo, el **historial**, con un grupo por cada turno terminado.
+El panel se organiza por **turnos**. Un turno empieza cuando le pides algo a Claude y dura hasta que el agente principal **y todos sus subagentes** terminan (o hasta que lo cancelas). Arriba va la **ejecución actual**, el turno en curso; debajo, el **historial**, con un grupo por cada turno terminado. Todo está siempre desplegado: no hay plegables ni botones dentro del panel; si hay más de lo que cabe, el motor desplaza el panel.
 
 Con el radar en `ON` y Claude trabajando (en inglés, el idioma por defecto; ver «Idioma»):
 
 ```text
-Current run
+● Current run                         Total time · 3m 36s · 19.8k tokens
 Build my landing page
-███░░░░░░░  Working                                  2m 35s
-● Main agent · opus-4-5 · high                       2m 35s
-  1/3                                ███░░░░░░░  Working
+● Main agent · opus-4-5 · high    Working   3m 36s   230  ███░░░░░░░
+  1/3
   ✓ Analyze project structure        ██████████  Done
   ▶ Implement authentication         ███░░░░░░░  Working
   ○ Run final tests                  ░░░░░░░░░░  Next
-● frontend-developer · haiku · low                   1m 20s
-  Building the login components
-  Reading project files              ███░░░░░░░  Working
-  ● backend-developer                                   45s
-    Reviewing authentication routes
-    Working                          ███░░░░░░░  Working
-✓ code-reviewer · haiku                                 30s
-                                     ██████████  Done
-
-History                                                  1
-✗ Fix the login bug                          Failed  4m 02s
-  ✗ Main agent · opus-4-5 · high                1/2  4m 02s
-  ✓ Explore · haiku                                  1m 10s
-    Done · Mapping the repo
+  ────────────────────────────────────────────────────────
+  Subagents                                        2 active
+  ● frontend-developer · haiku      Working   3m 10s  1.2k  ███░░░░░░░
+    Building the login components
+    Reading project files
+    ──────────────────────────────────────────────────────
+    ● backend-developer             Working   2m 05s 18.4k  ███░░░░░░░
+      Reviewing authentication routes
+      Working
+────────────────────────────────────────────────────────────
+History                                                2 runs
+✗ Fix the login bug              Failed   4m 02s   9.8k tokens
+  ✗ Main agent · opus-4-5 · high    1/2   4m 02s         6k
+  ✓ Explore · haiku                Done   1m 10s       3.8k
+    Mapping the repo
+────────────────────────────────────────────────────────────
+✓ Quick question                 Done        12s    410 tokens
+  ✓ Main agent · opus-4-5 · high             12s         410
 ```
+
+La fila de cada agente (el principal y cada subagente) tiene el mismo formato: a la izquierda la marca de estado, el nombre (en negrita mientras trabaja) y `modelo · esfuerzo` atenuado; a la derecha, en una sola línea, la etiqueta de estado (con su color), el tiempo, los tokens y la barra. La tarea delegada y la actividad van cada una en su propia línea, debajo y sangradas. El color queda para el estado (la marca, la etiqueta y la barra); lo demás va atenuado.
 
 Cuando termina todo, la ejecución actual pasa al historial y queda el mensaje `All done, ready for more instructions`.
 
@@ -105,53 +110,60 @@ Claude Radar                         [ ◧ Detalle ] [ ● Claude Radar: ON ] [ 
 ```
 
 ```text
-Ejecución actual
+● Ejecución actual                 Tiempo total · 3m 36s · 19.8k tokens
 Build my landing page
-███░░░░░░░  Trabajando                               2m 35s
-● Agente principal · opus-4-5 · high                 2m 35s
-  1/3                                ███░░░░░░░  Trabajando
+● Agente principal · opus-4-5 · high  Trabajando  3m 36s  230  ███░░░░░░░
+  1/3
   ✓ Analyze project structure        ██████████  Hecho
   ▶ Implement authentication         ███░░░░░░░  En curso
   ○ Run final tests                  ░░░░░░░░░░  Siguiente
-● frontend-developer · haiku · low                   1m 20s
-  Building the login components
-  Leyendo archivos del proyecto      ███░░░░░░░  Trabajando
-
-Historial                                                1
-✗ Fix the login bug                          Falló  4m 02s
-  ✗ Agente principal · opus-4-5 · high          1/2  4m 02s
-  ✓ Explore · haiku                                  1m 10s
-    Hecho · Mapping the repo
+  ────────────────────────────────────────────────────────
+  Subagentes                                      2 activos
+  ● frontend-developer · haiku     Trabajando  3m 10s  1.2k  ███░░░░░░░
+    Building the login components
+    Leyendo archivos del proyecto
+────────────────────────────────────────────────────────────
+Historial                                         2 ejecuciones
+✗ Fix the login bug              Falló    4m 02s   9.8k tokens
+  ✗ Agente principal · opus-4-5 · high  1/2  4m 02s        6k
+  ✓ Explore · haiku                Hecho    1m 10s       3.8k
+    Mapping the repo
 ```
 
 Sin nada en marcha, la ejecución actual dice `Todo listo, esperando instrucciones`.
 
 ## Qué muestra el panel
 
-Título `Claude Radar`; sin límite de filas (el motor lo desplaza); todo se trunca con `…` al ancho del panel, sin barras por debajo de 38 columnas (el checklist va sangrado dos columnas bajo el agente principal) y sin la etiqueta de estado por debajo de 36. Dos secciones, separadas por una línea en blanco:
+Sin límite de filas (el motor lo desplaza); todo se trunca con `…` al ancho del panel. Dos secciones, separadas por una línea fina (`─`, atenuada, cortada al ancho: el kit de dibujo no permite un borde de un solo lado, así que es un `Text`):
 
 - **Current run** (ejecución actual): el turno en curso.
-  - El **título del turno** (del prompt, sin rutas ni código, de 40 caracteres como máximo y cortado por palabras) y una línea de estado: barra, fase (con su razón si la hay) y tiempo total. La barra se mueve mientras algo corre (el agente principal trabajando o esperándote, o algún subagente activo) y queda llena y quieta al terminar.
-  - El **agente principal** (`Main agent`): su modelo y esfuerzo (`opus-4-5 · high`), el tiempo del turno, su barra de estado, `hechas/total` si hay checklist y, debajo, el checklist completo.
-  - Los **subagentes del turno**, los que trabajan y los que ya terminaron, con su jerarquía (ver «Subagentes»).
+  - **Encabezado:** a la izquierda `●` y el título de la sección; a la derecha el tiempo total del turno y sus tokens (`Total time · 3m 36s · 19.8k tokens`; los tokens solo si los hay y el panel es ancho). El `●` es verde y parpadea con el temporizador mientras algo corre (amarillo si alguien te espera); cuando todo terminó queda quieto y atenuado con la marca del final (`✓`, `✗` o `■`), cosa que casi no se ve porque el turno se archiva en ese momento. Sin turno en curso, el `●` va atenuado.
+  - El **título del turno** (del prompt, sin rutas ni código, de 80 caracteres como máximo y cortado por palabras; el dibujo lo corta con `…` al ancho real). Si el turno espera tu permiso o terminó con un error, la razón va a su lado, atenuada (`· Waiting for your permission`).
+  - El **agente principal** (`Main agent`): su fila (ver abajo), `hechas/total` en la línea de debajo si hay checklist y, después, el checklist completo.
+  - El bloque de los **subagentes del turno** (los que trabajan y los que ya terminaron), sangrado bajo el agente principal y con su jerarquía (ver «Subagentes»): un título `Subagents` con el contador de los activos a la derecha (`2 active`; en verde si hay alguno, atenuado si no) y, bajo él, una fila por agente separada de la siguiente por una línea fina.
   - Sin turno en curso: `All done, ready for more instructions`.
-- **History** (historial): un grupo por turno terminado, el más reciente primero, con el número de turnos en el encabezado (ver «Historial»). Vacío: `No finished turns yet`.
+- **History** (historial): el título con el número de turnos a la derecha (`2 runs`; `1 run` en singular) y un grupo por turno terminado, el más reciente primero, separados por una línea fina (ver «Historial»). Vacío: `No finished turns yet`.
 
 Sin ningún turno, ni en curso ni terminado: `Nothing running yet`.
 
-### Fase del turno
+### La fila de un agente y el ancho
 
-La línea de estado del turno usa la fase del agente principal, con una salvedad: mientras un subagente sigue activo, el turno sigue `Working` (o `Needs you` si es el subagente quien espera), aunque el agente principal ya haya terminado. El agente principal conserva su propio estado en su fila.
+La parte derecha de una fila nunca se encoge; el nombre y el modelo ceden primero (se cortan con `…`). Si el panel es estrecho, la fila va perdiendo columnas en este orden (anchos del cuerpo del panel, constantes en `hooks/claude-radar.tsx` y `hooks/register.tsx`):
 
-| Fase | Se muestra | Cuándo |
-|---|---|---|
-| Trabajando | `Working` · tiempo corriendo | hay un turno en curso |
-| `Needs you` | `Needs you · Waiting for your permission` (amarillo) | el motor pregunta a la persona si permite una llamada |
-| `Stuck` | `Stuck · The turn ended with an error` o `· The model declined to answer` (rojo) | el agente principal terminó por un error o una negativa del modelo |
-| `Stopped` | `Stopped` (naranja) | el turno se interrumpió |
-| `All done` | `All done` (verde) · tiempo total | el agente principal y todos los subagentes terminaron bien |
+| Ancho del cuerpo | Qué se ve en la fila |
+|---|---|
+| 52 o más (`TOKENS_MIN_COLUMNS`) | etiqueta de estado, tiempo, tokens y barra |
+| 38 a 51 | etiqueta de estado, tiempo y barra (sin tokens) |
+| 36 y 37 (`STATUS_MIN_COLUMNS`) | etiqueta de estado y tiempo |
+| menos de 36 | solo el tiempo |
 
-`Stuck`, `Stopped` y `All done` no llegan a verse en la ejecución actual: en cuanto el agente principal terminó y no queda ningún subagente activo, el turno se archiva y pasa al historial con ese estado final (ver «Historial»).
+La barra desaparece por debajo de 38 columnas (`BARS_MIN_COLUMNS` es 40, medido con el cuerpo más las dos columnas de sangría del checklist), igual que antes; la misma regla vale para las barras del checklist. Las columnas de tiempo y de tokens de un bloque tienen el ancho de su cifra más larga, así que se alinean; sin ninguna cifra de tokens la columna no existe. En la cabecera de un grupo del historial la cifra de tokens lleva la palabra (`9.8k tokens`) para que se sepa qué es; en las filas va sola.
+
+### Estado del turno
+
+El encabezado de la ejecución actual ya no lleva una etiqueta de fase propia: el estado de cada agente está en su fila (`Working`, `Needs you`, `Done`, `Failed`, `Stopped`) y el `●` del encabezado dice si algo corre. Un turno sigue abierto, y su `●` parpadeando, mientras el agente principal o algún subagente sigan activos, aunque el principal ya haya terminado. Con el motor preguntándote un permiso, la fila de quien pregunta dice `Needs you` y el título del turno muestra `· Waiting for your permission`.
+
+Cuando el agente principal terminó y no queda ningún subagente activo, el turno se archiva y pasa al historial con su estado final `Done`, `Stopped` o `Failed` (ver «Historial»).
 
 ### El checklist
 
@@ -162,8 +174,9 @@ Sale solo de lo que Claude ya crea por su cuenta: `TodoWrite`, `TaskCreate` y `T
 - **Alta:** el hook `agent.spawn` guarda cada ejecución con su `agentId` y devuelve el resultado del motor tal cual.
 - **Nombre real:** el `subagentType` (`frontend-developer`, `Explore`, un agente de un plugin…), nunca una etiqueta genérica; solo se trunca visualmente.
 - **Dentro del turno:** los subagentes de un turno se quedan en la ejecución actual, con su estado (`Done`, `Failed` o `Stopped`) y su tiempo congelado, hasta que el turno se archiva. Ya no se retiran a los pocos segundos.
-- **Fila:** nombre, modelo y esfuerzo, tiempo, una barra de estado y, debajo, la tarea delegada y la actividad con la etiqueta de estado. La barra **nunca lleva porcentaje**: se mueve mientras el subagente trabaja o te espera y queda llena al terminar (el color y la etiqueta dicen cómo). De un subagente terminado se ve la tarea y la etiqueta, no la actividad.
+- **Fila:** la misma que la del agente principal: marca de estado, nombre, modelo y esfuerzo, y a la derecha la etiqueta de estado, el tiempo, los tokens y una barra de estado; debajo, la tarea delegada y la actividad, cada una en su línea. La barra **nunca lleva porcentaje**: se mueve mientras el subagente trabaja o te espera y queda llena al terminar (el color y la etiqueta dicen cómo). De un subagente terminado se ve la tarea, no la actividad.
 - **Modelo y esfuerzo:** junto al nombre, atenuados (`Explore · haiku · low`). Salen de `turn.step` (cada petición al modelo, del agente principal o de un subagente por su `agentId`); antes de la primera petición de un subagente se muestra el modelo que dio su spawn. El id se acorta (`claude-opus-4-5-20251101` es `opus-4-5`; un alias como `haiku` queda igual). Si el modelo no admite esfuerzo, solo se ve el modelo; si aún no se sabe nada, nada.
+- **Tokens:** ver «Tokens» más abajo.
 - **Instancias independientes:** dos ejecuciones del mismo agente son dos entradas, con su tiempo y su estado propios.
 - **Tarea y actividad:** la tarea delegada completa en una línea (sin rutas ni código) y, debajo, la actividad actual. La actividad sale de los `tool.call` con el `agentId` del subagente, descrita con palabras locales y sin rutas, comandos ni código:
 
@@ -179,8 +192,18 @@ Sale solo de lo que Claude ya crea por su cuenta: `TodoWrite`, `TaskCreate` y `T
 
   Mientras no haya ninguna, la actividad es `Working`.
 - **Estados:** `●` verde `Working`, `●` amarillo `Needs you`, `✓` `Done`, `✗` `Failed`, `■` `Stopped`. Termina con el `turn.complete` del subagente: `answer` es Done, `aborted` es Stopped, `error` o `refusal` es Failed. El tiempo individual se congela al terminar. La primera finalización manda; si ese agente vuelve a llamar a una herramienta, regresa a `Working`.
-- **Jerarquía:** solo si el spawn trae `parentAgentId` y ese padre sigue en la lista; entonces el hijo va debajo de su padre, con sangría. Si no, la lista es plana.
+- **Jerarquía:** solo si el spawn trae `parentAgentId` y ese padre sigue en la lista; entonces el hijo va debajo de su padre, con sangría. Si no, la lista es plana. Todo el bloque va sangrado bajo el agente principal.
 - La finalización de un subagente no cierra el turno principal ni al revés: el turno sigue abierto mientras alguno de los dos esté activo. Un subagente en segundo plano que sigue trabajando después de que el agente principal responda mantiene el turno en la ejecución actual.
+
+### Tokens
+
+El panel muestra los tokens de cada agente, los del turno en el encabezado y los de cada turno archivado. Son cifras reales, no estimaciones, y el radar sigue sin llamar a ningún modelo ni leer transcripciones:
+
+- **De dónde salen:** del `usage` que el motor entrega con el resultado de cada petición al modelo (`turn.step`), tal como lo reportó la API. El hook captura el resultado del flujo, lee `usage` y lo devuelve **intacto** (sigue siendo de solo observación). La petición es del agente principal o, si trae `agentId`, de un subagente.
+- **Qué suman:** `input_tokens + output_tokens + cache_creation_input_tokens`. **No** suman `cache_read_input_tokens`: el prefijo del prompt que sirve la caché se vuelve a leer en cada paso y inflaría la cifra. Es una elección de este mod (`tokensOf`); la cifra no pretende coincidir con una factura.
+- **Cómo se acumulan:** el principal en `leaderTokens` (se reinicia al empezar cada turno) y cada subagente en su `tokens`; el total del turno es el principal más todos los subagentes. Al archivar el turno se guardan en su registro (`tokens`, `leader.tokens`, y los de cada subagente). Una petición de un subagente que llega antes de que su spawn quede listado se guarda aparte (junto a su modelo y esfuerzo) y se aplica al listarse.
+- **Lo que no se usa:** el `usage` que trae `turn.complete` (la suma del turno) no se lee, para no contar dos veces lo que los pasos ya sumaron.
+- **Formato:** `850`, `1.2k` (un decimal por debajo de 100k), `150k` (entero desde 100k), `1.2M` (`compactTokens`). Sin tokens todavía, no se muestra la cifra. La palabra (`tokens`, también en español) acompaña la cifra del encabezado y la de la cabecera de cada grupo del historial.
 
 ### Historial
 
@@ -188,10 +211,11 @@ Un turno se **archiva** cuando el agente principal terminó (bien, con error o i
 
 - el **título** del turno y su **estado final**: `Done` si se respondió, `Stopped` si se canceló, `Failed` si terminó con un error o una negativa del modelo;
 - cuándo empezó y cuándo terminaron el agente principal y todos sus subagentes (la duración es la diferencia);
-- el **agente principal**: modelo y esfuerzo, y cuántas tareas del checklist se hicieron del total;
-- los **subagentes** del turno, en orden de inicio, cada uno con su estado final, duración y tarea.
+- los **tokens** del turno (el total del principal y los subagentes);
+- el **agente principal**: modelo y esfuerzo, cuántas tareas del checklist se hicieron del total y sus tokens;
+- los **subagentes** del turno, en orden de inicio, cada uno con su estado final, duración, tokens y tarea.
 
-El panel dibuja un grupo por turno: una cabecera (título, estado final con su color y duración) y debajo el agente principal (`hechas/total` si había tareas) y sus subagentes con su estado final y su tarea. Un turno sin subagentes muestra solo la fila del agente principal. El checklist y el motivo exacto de un error no se conservan en el historial.
+El panel dibuja un grupo por turno, siempre abierto: una cabecera (título, estado final con su color, duración y tokens) y debajo el agente principal (`hechas/total` si había tareas, tiempo y tokens) y sus subagentes, sangrados, con su estado final, duración, tokens y, en su línea, su tarea. Un turno sin subagentes muestra solo la fila del agente principal. Entre un grupo y el siguiente va una línea fina. El checklist y el motivo exacto de un error no se conservan en el historial.
 
 Si empieza un turno nuevo mientras el anterior sigue abierto (el principal ya terminó pero un subagente sigue activo), el anterior se archiva a la fuerza: los subagentes aún activos pasan a `Stopped` y el turno nuevo empieza vacío. Al terminar la sesión (`session.end`, también con `/clear`) se borra todo lo que el radar seguía, el historial incluido; solo se conserva la elección ON/OFF.
 
@@ -217,23 +241,23 @@ Es **solo dibujo**: no bloquea, modifica ni cancela herramientas, los resultados
 
 El radar **no engancha** `AssistantMessage`, `UserMessage`, `TurnDuration`, `InfoNotice`, `SessionMode`, `AskUserQuestion`, `PromptHint` ni `CommandOutput`: la respuesta final, los reportes de archivos, los resultados de pruebas, las advertencias y los errores los dibuja siempre el motor. `All done` convive con la respuesta, no la sustituye. Los únicos `ui.render` del mod son `AbovePrompt` (la banda), `Pane` (el panel de detalle), `ToolUse`, `ToolResult`, `ToolGroup` y `ToolProgress`; `claude plugin validate` los lista.
 
-## Consumo de tokens: prácticamente cero
+## Consumo de tokens del mod: prácticamente cero
 
-El mod solo observa eventos y dibuja:
+Lo que el mod gasta, no lo que muestra (los tokens que ve el panel son los de Claude y sus subagentes; ver «Tokens»). El mod solo observa eventos y dibuja:
 
 - no llama a ningún modelo (ni para títulos, porcentajes o actividades);
 - no engancha `prompt.compose` ni ningún otro `prompt.*`, no inyecta instrucciones ni mensajes en la conversación;
 - no registra herramientas ni agentes, y no crea subagentes de supervisión; su único comando es `/agent-radar` (abre y cierra el panel), cuya respuesta es la única línea que escribe en la conversación;
 - no lee transcripciones ni archivos de agentes; el estado se actualiza con los eventos que ya pasan;
-- los hooks de eventos devuelven `next(e)` o el resultado de `await next(e)` sin tocarlos;
+- los hooks de eventos devuelven `next(e)` o el resultado de `await next(e)` sin tocarlos (el de `turn.step`, un generador, captura el resultado con `yield* next(e)`, lee su `usage` y devuelve ese mismo resultado);
 - un único temporizador de 250 ms (animación y tiempos del panel) que corre **solo con el panel abierto** y mientras hay algo que mover, y se cancela al cerrarlo, al quedar inactivo o en `OFF`. Con el panel cerrado no hay tics: el estado se actualiza solo por eventos. Ya no hay ningún temporizador de un solo disparo: los subagentes no se retiran por tiempo, el turno se archiva con el evento que lo termina.
 
 ## Tipo y fuente de datos
 
 - **Tipo:** hook (plugin de Claude Code).
-- **Eventos:** `session.start` (registra el comando), `command.run` de `/agent-radar`, `session.end` (borra el estado de la sesión), `ui.close` del panel de detalle, `turn.start` (abre el turno; si uno seguía abierto, lo archiva a la fuerza), `turn.step` (solo observa el modelo y el esfuerzo), `turn.complete` (termina al agente principal o a un subagente y archiva el turno cuando ya no queda nada activo), `tool.call`, `tool.check` (para `Needs you`: solo cuenta una pregunta de origen `engine`), `agent.spawn`.
+- **Eventos:** `session.start` (registra el comando), `command.run` de `/agent-radar`, `session.end` (borra el estado de la sesión), `ui.close` del panel de detalle, `turn.start` (abre el turno; si uno seguía abierto, lo archiva a la fuerza), `turn.step` (solo observa: el modelo, el esfuerzo y, una vez respondida la petición, los tokens de su `usage`), `turn.complete` (termina al agente principal o a un subagente y archiva el turno cuando ya no queda nada activo), `tool.call`, `tool.check` (para `Needs you`: solo cuenta una pregunta de origen `engine`), `agent.spawn`.
 - **Dibujo:** `ui.render` sobre `AbovePrompt` (la banda), sobre `Pane` con `requestId` `agent-radar` (el panel de detalle) y sobre las cuatro filas técnicas. El panel se abre y cierra con `$.ui.open` / `$.ui.close`.
-- **Estado:** `$.state` con cinco claves: `claudeRadarState` (todo el estado: el turno actual con sus subagentes y `turns`, los turnos archivados), `claudeRadarHidesTools` (si las filas están ocultas; aparte para que la transcripción se redibuje al cambiar de fase y no en cada tic), `claudeRadarPaneOpen` (si el panel está abierto, para el botón y el temporizador), `claudeRadarBandHidden` (si la banda está quitada) y `claudeRadarLang` (el idioma, o `null` hasta que se lee).
+- **Estado:** `$.state` con cinco claves: `claudeRadarState` (todo el estado: el turno actual con sus subagentes y sus tokens, y `turns`, los turnos archivados), `claudeRadarHidesTools` (si las filas están ocultas; aparte para que la transcripción se redibuje al cambiar de fase y no en cada tic), `claudeRadarPaneOpen` (si el panel está abierto, para el botón y el temporizador), `claudeRadarBandHidden` (si la banda está quitada) y `claudeRadarLang` (el idioma, o `null` hasta que se lee).
 - **Almacén, ajustes y reloj:** `$.store` (claves `enabled` y `bandHidden`), `$.settings.read()` (clave `language`), `$.clock.now()` y `$.clock.every(250, …)`.
 
 ## Instalación
@@ -290,7 +314,7 @@ agent-radar/
 │   ├── register.tsx             # hooks, átomos y todo uso de $: la banda mínima, el panel de detalle, el idioma y las filas ocultas
 │   ├── i18n.ts                  # textos en español e inglés y detección del idioma (lógica pura)
 │   ├── i18n.test.ts             # tests de la detección y de los diccionarios
-│   ├── claude-radar.tsx         # lógica pura: reducers, archivo de turnos, barras, tiempos, ocultación, vista del panel de detalle
+│   ├── claude-radar.tsx         # lógica pura: reducers, archivo de turnos, tokens, barras, tiempos, ocultación, vista del panel de detalle
 │   └── claude-radar.test.ts     # tests (lógica y render)
 └── types/index.d.ts             # contrato del estado ($.state): ClaudeRadarState, TurnRecord, SubagentState, Lang, claudeRadarHidesTools, claudeRadarPaneOpen, claudeRadarLang
 ```
@@ -323,6 +347,7 @@ Lo que **no se pudo verificar** contra el Claude Code real (los tests usan el ki
 - **Redibujo de las filas ocultas:** que cada fila de la transcripción reaccione al cambio de `claudeRadarHidesTools` se comprobó con el kit, no con el motor real. Una carrera entre dos cambios concurrentes podría dejarlo desfasado un instante; se corrige con el siguiente cambio de estado.
 - **Teammates:** un teammate que queda en reposo y despierta emite un `turn.complete` por ejecución. El radar lo marca `Done`; si con eso el turno se archiva, ignora sus llamadas posteriores, porque ya no está en la lista del turno actual (queda en el historial del turno).
 - **Subagentes sin `turn.complete`** (un agente remoto de un workflow, por ejemplo) se quedan en `Working` hasta `session.end` (o hasta que empiece otro turno, que archiva el anterior a la fuerza y los pasa a `Stopped`); mientras tanto mantienen abierto el turno y, con el panel abierto, vivo el temporizador.
+- **Tokens:** los tests alimentan el `usage` con un `turn.step` simulado; no se vio con cifras de un Claude Code real. Solo cuentan las peticiones que pasan por `turn.step`: no las de otros plugins (`$.model.complete`), ni un resumen de compactación, ni las de un subagente que el radar no sigue (sin spawn visible). Una petición cuyo flujo se corta antes del final, o cuya respuesta no trae `usage`, no suma. Son los tokens que reporta la API menos la lectura de caché (ver «Tokens»), así que no son lo que cobra el proveedor.
 - **Identificador de sesión:** el spawn no trae uno; `sessionId` queda vacío.
 - **Jerarquía:** se apoya en `parentAgentId` tal como lo describen los tipos; no se vio con subagentes anidados reales.
 - **Actividad:** se deduce solo del nombre de la herramienta (y, en `Bash`, de si el comando parece una prueba), no de su resultado. Es una pista, no una garantía de lo que ocurre. Una herramienta desconocida no cambia la actividad.

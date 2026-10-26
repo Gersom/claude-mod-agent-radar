@@ -1,4 +1,4 @@
-import type { ActivityCode, AgentPhase, ChecklistTask, Lang, ReasonCode, SubagentStatus } from '../types'
+import type { ActivityCode, ChecklistTask, Lang, ReasonCode, SubagentStatus } from '../types'
 
 /** Every word the radar writes itself, in one language. Names and titles that come from the person's text are never in here. */
 export type Texts = {
@@ -25,8 +25,16 @@ export type Texts = {
   nothing: string
   /** What the history says while it is empty. */
   noFinished: string
-  /** The main turn's phase. */
-  phase: Record<AgentPhase, string>
+  /** `Total time` (`Tiempo total`): the label of the current run's time, in its heading. */
+  totalTime: string
+  /** `tokens`: the unit written after a figure of tokens. */
+  tokens: string
+  /** `Subagents` (`Subagentes`): the title of the block of the turn's subagents. */
+  subagents: string
+  /** `3 active` (`3 activos`): how many subagents are at work, in the title of their block. */
+  active: (count: number) => string
+  /** `6 runs` (`6 ejecuciones`): how many turns the history holds, in its heading. */
+  runs: (count: number) => string
   /** Why the turn waits or is stuck. */
   reason: Record<ReasonCode, string>
   /** A checklist task's status. */
@@ -80,7 +88,11 @@ export const TEXTS: Record<Lang, Texts> = {
     history: 'Historial',
     nothing: 'Aún no hay nada en marcha',
     noFinished: 'Aún no hay turnos terminados',
-    phase: { working: 'Trabajando', needsYou: 'Te necesita', stuck: 'Atascado', stopped: 'Detenido', done: 'Todo listo' },
+    totalTime: 'Tiempo total',
+    tokens: 'tokens',
+    subagents: 'Subagentes',
+    active: count => (count === 1 ? '1 activo' : `${count} activos`),
+    runs: count => (count === 1 ? '1 ejecución' : `${count} ejecuciones`),
     reason: {
       permission: 'Esperando tu permiso',
       error: 'El turno terminó con un error',
@@ -121,7 +133,11 @@ export const TEXTS: Record<Lang, Texts> = {
     history: 'History',
     nothing: 'Nothing running yet',
     noFinished: 'No finished turns yet',
-    phase: { working: 'Working', needsYou: 'Needs you', stuck: 'Stuck', stopped: 'Stopped', done: 'All done' },
+    totalTime: 'Total time',
+    tokens: 'tokens',
+    subagents: 'Subagents',
+    active: count => `${count} active`,
+    runs: count => (count === 1 ? '1 run' : `${count} runs`),
     reason: {
       permission: 'Waiting for your permission',
       error: 'The turn ended with an error',

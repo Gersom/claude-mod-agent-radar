@@ -32,6 +32,8 @@ export type SubagentState = {
   parentId?: string
   /** Its model and effort, from the spawn and then from each of its model requests (`turn.step`); absent until one is seen. */
   modelInfo?: ModelInfo
+  /** The tokens its model requests used, as the API reported them (`turn.step`'s usage, see `tokensOf`); absent until one is seen. */
+  tokens?: number
   startedAt: number
   finishedAt: number | null
 }
@@ -57,8 +59,10 @@ export type TurnRecord = {
   startedAt: number
   /** When the main agent and every subagent had ended. */
   finishedAt: number
-  /** The main agent: its model and effort, and how many of its checklist's tasks were done. */
-  leader: { modelInfo?: ModelInfo; tasksDone: number; tasksTotal: number; finishedAt: number }
+  /** The tokens of the whole turn: the main agent's and every subagent's. */
+  tokens: number
+  /** The main agent: its model and effort, how many of its checklist's tasks were done and the tokens it used. */
+  leader: { modelInfo?: ModelInfo; tasksDone: number; tasksTotal: number; tokens: number; finishedAt: number }
   /** The subagents of the turn, in start order, each in its final state. */
   agents: SubagentState[]
 }
@@ -77,6 +81,8 @@ export type ClaudeRadarState = {
   }
   /** The main agent's model and effort, from its model requests; absent until one is seen. */
   leaderModel?: ModelInfo
+  /** The tokens the main agent used in the current turn, from its model requests; absent (zero) until one is seen, and gone again when the turn starts or is archived. */
+  leaderTokens?: number
   /** The subagents of the current turn, working or finished, until the turn is archived. */
   subagents: Record<string, SubagentState>
   /** The turns that ended, the most recent first, at most 10; the detail pane lists them. */

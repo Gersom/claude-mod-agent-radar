@@ -40,6 +40,9 @@ export const BARS_MIN_COLUMNS = 40
 /** The most characters of an activity's name. */
 const NAME_MAX = 40
 
+/** The most characters of a turn's title; the drawing cuts it again to the width of the pane. */
+const TITLE_MAX = 80
+
 type Checklist = ClaudeRadarState['checklist']
 
 /** What `turn.complete` says about why the turn ended. */
@@ -86,17 +89,17 @@ const tidy = (text: string) => {
   return kept === '' ? '' : kept.charAt(0).toUpperCase() + kept.slice(1)
 }
 
-/** The tidied text cut to at most 40 characters by words; empty when nothing is left. */
-const clean = (text: string) => {
+/** The tidied text cut to at most `max` characters by words; empty when nothing is left. */
+const clean = (text: string, max = NAME_MAX) => {
   const named = tidy(text)
 
-  if (named.length <= NAME_MAX) return named
+  if (named.length <= max) return named
 
   // One character past the limit: a word that ends exactly on it stays whole.
-  const head = named.slice(0, NAME_MAX + 1)
+  const head = named.slice(0, max + 1)
   const space = head.lastIndexOf(' ')
 
-  return (space > 0 ? head.slice(0, space) : named.slice(0, NAME_MAX)).replace(/[\s:;,\-–]+$/, '')
+  return (space > 0 ? head.slice(0, space) : named.slice(0, max)).replace(/[\s:;,\-–]+$/, '')
 }
 
 /** The short name of an activity: paths and code taken out, 40 characters at most; empty when nothing valid is left (the drawing puts `Working on it`, in its language, in its place). */
@@ -115,10 +118,17 @@ export const bar = (percent: number | null, tick: number) => {
   return '█'.repeat(filled) + '░'.repeat(BAR_WIDTH - filled)
 }
 
-/** A new turn: working from `now`, nothing kept of the last one (one still open is archived first, see `forceArchive`), its title made from the prompt. */
+/** The same state without the main agent's tokens: a turn starts counting from zero. */
+const withoutLeaderTokens = (state: ClaudeRadarState): ClaudeRadarState => {
+  const { leaderTokens: _, ...rest } = state
+
+  return rest
+}
+
+/** A new turn: working from `now`, nothing kept of the last one (one still open is archived first, see `forceArchive`), its title made from the prompt (80 characters at most). */
 export const startTurn = (state: ClaudeRadarState, text: string, now: number): ClaudeRadarState =>
-  patchChecklist(forceArchive(state, now), {
-    title: clean(text) || null,
+  patchChecklist(withoutLeaderTokens(forceArchive(state, now)), {
+    title: clean(text, TITLE_MAX) || null,
     phase: 'working',
     tasks: [],
     needsYouReason: null,
@@ -277,8 +287,11 @@ export const layoutOf = (rows: readonly TaskRow[], bodyColumns: number) => {
 /** The most turns the archive keeps. */
 export const TURNS_MAX = 10
 
-/** Below this many columns of the pane body the subagents drop their status column. */
+/** Below this many columns of the pane body the agent rows drop their status label. */
 export const STATUS_MIN_COLUMNS = 36
+
+/** Below this many columns of the pane body the agent rows drop their tokens column (the label, the time and the bar take the room first). */
+export const TOKENS_MIN_COLUMNS = 52
 
 type Subagents = ClaudeRadarState['subagents']
 
@@ -348,6 +361,49 @@ export const stepModel = (state: ClaudeRadarState, id: string | undefined, info:
   return patchSubagent(state, id, { modelInfo: info })
 }
 
+/** The counts of a model request that make up its tokens; a missing one reads as zero. */
+type TokenCounts = { input_tokens?: number; output_tokens?: number; cache_creation_input_tokens?: number } | null | undefined
+
+/**
+ * The tokens a model request cost, as the API reported them: input, output and what it wrote to the cache. What the cache served
+ * (`cache_read_input_tokens`) is left out: the same prompt prefix is read again on every step and would inflate the figure.
+ */
+export const tokensOf = (usage: TokenCounts) => {
+  const count = (n: number | undefined) => (typeof n === 'number' && Number.isFinite(n) && n > 0 ? n : 0)
+
+  return count(usage?.input_tokens) + count(usage?.output_tokens) + count(usage?.cache_creation_input_tokens)
+}
+
+/** A figure of tokens in short form: `850`, `1.2k`, `18.4k` (one decimal below 100k), `150k` (whole from 100k), `1.2M`. */
+export const compactTokens = (n: number) => {
+  const whole = Number.isFinite(n) ? Math.max(0, Math.round(n)) : 0
+  const scaled = (value: number, unit: string) => `${value < 100 ? Math.round(value * 10) / 10 : Math.round(value)}${unit}`
+
+  if (whole < 1000) return String(whole)
+  // Past 999.5k the figure would read `1000k`: it is millions already.
+  if (whole < 999_500) return scaled(whole / 1000, 'k')
+
+  return scaled(whole / 1_000_000, 'M')
+}
+
+/** The tokens of a request added to the main agent's (`id` undefined) or to a subagent's. The same state when there is nothing to add or the subagent is not followed. */
+export const addTokens = (state: ClaudeRadarState, id: string | undefined, tokens: number): ClaudeRadarState => {
+  if (!(tokens > 0) || !Number.isFinite(tokens)) return state
+  if (id === undefined) return { ...state, leaderTokens: (state.leaderTokens ?? 0) + tokens }
+  if (!isKnown(state, id)) return state
+
+  return patchSubagent(state, id, { tokens: (state.subagents[id]!.tokens ?? 0) + tokens })
+}
+
+/** The tokens of the whole turn that runs: the main agent's and every subagent's. */
+const turnTokens = (leader: number | undefined, agents: Iterable<SubagentState>) => {
+  let total = leader ?? 0
+
+  for (const agent of agents) total += agent.tokens ?? 0
+
+  return total
+}
+
 /** Looks like a test run: `test`, `jest`, `vitest`, `pytest` at the start of a word (so `latest` does not count). */
 const TEST_COMMAND = /(?<![a-z])(?:test|jest|vitest|pytest)/i
 
@@ -407,7 +463,7 @@ export const finishSubagent = (state: ClaudeRadarState, id: string, reason: Turn
 /** How many subagents are at work (running or waiting for the person). */
 export const activeCount = (subagents: Subagents) => Object.values(subagents).filter(agent => isActive(agent.status)).length
 
-/** The turn, closed and put at the front of the archive (at most `TURNS_MAX`); the current turn is left empty. Subagents still at work are stopped at `now`. The model of the main agent, the ON/OFF choice and the tick stay. */
+/** The turn, closed and put at the front of the archive (at most `TURNS_MAX`) with its tokens; the current turn is left empty, tokens included. Subagents still at work are stopped at `now`. The model of the main agent, the ON/OFF choice and the tick stay. */
 const archiveTurn = (state: ClaudeRadarState, now: number): ClaudeRadarState => {
   const { checklist } = state
   const agents = Object.values(state.subagents)
@@ -427,16 +483,18 @@ const archiveTurn = (state: ClaudeRadarState, now: number): ClaudeRadarState => 
     status,
     startedAt: checklist.startedAt!,
     finishedAt,
+    tokens: turnTokens(state.leaderTokens, agents),
     leader: {
       ...(state.leaderModel === undefined ? {} : { modelInfo: state.leaderModel }),
       tasksDone: checklist.tasks.filter(task => task.status === 'done').length,
       tasksTotal: checklist.tasks.length,
+      tokens: state.leaderTokens ?? 0,
       finishedAt: checklist.finishedAt ?? now
     },
     agents
   }
 
-  return { ...state, checklist: initialState().checklist, subagents: {}, turns: [record, ...state.turns].slice(0, TURNS_MAX) }
+  return { ...withoutLeaderTokens(state), checklist: initialState().checklist, subagents: {}, turns: [record, ...state.turns].slice(0, TURNS_MAX) }
 }
 
 /** Archives the turn at once, whatever is still going on; the same state when there is no turn. */
@@ -514,6 +572,8 @@ export type PaneRow = {
   bar: string
   /** `2/3`, the tasks done of the checklist; null when there is none. */
   tasks: string | null
+  /** The tokens it used so far, short (`18.4k`); null while there are none. */
+  tokens: string | null
 }
 
 /** A subagent in the pane: live or finished, with the whole task (one line, tidied) and the activity, in words. */
@@ -523,19 +583,27 @@ export type PaneAgent = PaneRow & {
   depth: number
 }
 
-/** The turn that runs now: its title, its state line, the main agent with its whole checklist, and the subagents of the turn (at work or finished) with their hierarchy. */
+/** The turn that runs now: its title, its total time and tokens, the main agent with its whole checklist, and the subagents of the turn (at work or finished) with their hierarchy. */
 export type PaneCurrent = {
   title: string
-  label: string
   /** Why it waits or is stuck, in words; null when there is no reason to give. */
   reason: string | null
+  /** The time of the whole turn: running while anything works, frozen with the last one to end. */
   time: string
-  /** The turn's bar: moving while anything runs, full when all ended. */
-  bar: string
+  /** The tokens of the whole turn (the main agent's and every subagent's), short; null while there are none. */
+  tokens: string | null
   tone: AgentPhase
+  /** The mark of the heading: `●` while anything runs, the end mark (`✓`, `✗`, `■`) once all ended. */
+  mark: PaneRow['mark']
+  /** Whether anything runs: the heading's mark pulses then. */
+  isRunning: boolean
+  /** Half of the ticks: the heading's mark is lit in them and dim in the others. */
+  isLit: boolean
   leader: PaneRow
   tasks: TaskRow[]
   agents: PaneAgent[]
+  /** How many of the subagents are at work (running or waiting for the person). */
+  active: number
 }
 
 /** A turn in the archive: how it ended and how long it took, the main agent and the subagents, each in its final state. */
@@ -546,9 +614,14 @@ export type PaneTurn = {
   mark: PaneRow['mark']
   label: string
   time: string
+  /** The tokens of the whole turn, short; null when there were none. */
+  tokens: string | null
   leader: PaneRow
   agents: PaneAgent[]
 }
+
+/** A count of tokens as the pane writes it, or null when there are none (nothing is drawn then). */
+const tokensText = (tokens: number | undefined) => (tokens !== undefined && tokens > 0 ? compactTokens(tokens) : null)
 
 /** The mark and the status bar of an agent by its status. */
 const looksOf = (status: SubagentStatus, tick: number) => ({
@@ -568,6 +641,7 @@ const paneAgentOf = (agent: SubagentState, now: number, depth: number, tick: num
   label: t.agent[agent.status],
   detail: detailOf(agent.modelInfo),
   tasks: null,
+  tokens: tokensText(agent.tokens),
   depth
 })
 
@@ -581,6 +655,7 @@ const paneLeaderOf = (
   model: ModelInfo | undefined,
   tasks: { done: number; total: number },
   time: string,
+  tokens: number,
   tick: number,
   t: Texts
 ): PaneRow => ({
@@ -591,7 +666,8 @@ const paneLeaderOf = (
   time,
   label: t.agent[status],
   detail: detailOf(model),
-  tasks: tasks.total > 0 ? `${tasks.done}/${tasks.total}` : null
+  tasks: tasks.total > 0 ? `${tasks.done}/${tasks.total}` : null,
+  tokens: tokensText(tokens)
 })
 
 /** Where the main agent stands, as a subagent's status is told. */
@@ -632,21 +708,25 @@ const currentOf = (state: ClaudeRadarState, now: number, tick: number, t: Texts)
 
   return {
     title: checklist.title ?? t.defaultTitle,
-    label: t.phase[phase],
     reason: reasonOf(checklist, phase, t),
     time,
-    bar: isRunning ? bar(null, tick) : bar(100, tick),
+    tokens: tokensText(turnTokens(state.leaderTokens, agents)),
     tone: phase,
+    mark: isRunning ? '●' : SUBAGENT_MARKS[LEADER_STATUS[phase]],
+    isRunning,
+    isLit: Math.floor(tick) % 2 === 0,
     leader: paneLeaderOf(
       LEADER_STATUS[checklist.phase],
       state.leaderModel,
       { done: checklist.tasks.filter(task => task.status === 'done').length, total: checklist.tasks.length },
       elapsed((checklist.finishedAt ?? now) - checklist.startedAt),
+      state.leaderTokens ?? 0,
       tick,
       t
     ),
     tasks: rowsOf(checklist, tick, t),
-    agents: paneAgentsOf(state.subagents, now, tick, t)
+    agents: paneAgentsOf(state.subagents, now, tick, t),
+    active: activeCount(state.subagents)
   }
 }
 
@@ -661,7 +741,16 @@ const turnOf = (turn: TurnRecord, now: number, tick: number, t: Texts): PaneTurn
     mark: SUBAGENT_MARKS[turn.status],
     label: t.agent[turn.status],
     time,
-    leader: paneLeaderOf(turn.status, turn.leader.modelInfo, { done: turn.leader.tasksDone, total: turn.leader.tasksTotal }, elapsed(turn.leader.finishedAt - turn.startedAt), tick, t),
+    tokens: tokensText(turn.tokens),
+    leader: paneLeaderOf(
+      turn.status,
+      turn.leader.modelInfo,
+      { done: turn.leader.tasksDone, total: turn.leader.tasksTotal },
+      elapsed(turn.leader.finishedAt - turn.startedAt),
+      turn.leader.tokens,
+      tick,
+      t
+    ),
     agents: paneAgentsOf(Object.fromEntries(turn.agents.map(agent => [agent.id, agent])), now, tick, t)
   }
 }

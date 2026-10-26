@@ -42,10 +42,10 @@ test('each language has its own texts, and a word for everything', async () => {
 
   // No text is empty, in either language.
   for (const texts of [es, en]) {
-    for (const key of ['name', 'detail', 'close', 'currentRun', 'mainAgent', 'ready', 'history', 'nothing', 'noFinished', 'working', 'defaultTitle', 'workingOnIt'] as const) {
+    for (const key of ['name', 'detail', 'close', 'currentRun', 'mainAgent', 'ready', 'history', 'nothing', 'noFinished', 'totalTime', 'tokens', 'subagents', 'working', 'defaultTitle', 'workingOnIt'] as const) {
       expect(texts[key].length).toBeGreaterThan(0)
     }
-    for (const group of [texts.phase, texts.reason, texts.task, texts.agent, texts.activity]) {
+    for (const group of [texts.reason, texts.task, texts.agent, texts.activity]) {
       for (const text of Object.values(group)) expect(text.length).toBeGreaterThan(0)
     }
   }
@@ -76,12 +76,20 @@ test('the pane sections, the main agent and the ready message are put in each la
   ])
   expect([en.nothing, en.noFinished]).toEqual(['Nothing running yet', 'No finished turns yet'])
   expect([es.nothing, es.noFinished]).toEqual(['Aún no hay nada en marcha', 'Aún no hay turnos terminados'])
-  // Words of the old pane design are gone from both dictionaries.
+  // Words of the old pane design are gone from both dictionaries (the turn's own phase label went: the agents' rows carry the states).
   for (const texts of [en, es]) {
     expect(Object.keys(texts)).not.toContain('now')
-    expect(Object.keys(texts)).not.toContain('subagents')
-    expect(Object.keys(texts)).not.toContain('active')
+    expect(Object.keys(texts)).not.toContain('phase')
   }
+})
+
+test('the heading words: total time, tokens, subagents, how many are active and how many runs', async () => {
+  expect([en.totalTime, en.tokens, en.subagents]).toEqual(['Total time', 'tokens', 'Subagents'])
+  expect([es.totalTime, es.tokens, es.subagents]).toEqual(['Tiempo total', 'tokens', 'Subagentes'])
+  expect([0, 1, 3].map(en.active)).toEqual(['0 active', '1 active', '3 active'])
+  expect([0, 1, 3].map(es.active)).toEqual(['0 activos', '1 activo', '3 activos'])
+  expect([0, 1, 6].map(en.runs)).toEqual(['0 runs', '1 run', '6 runs'])
+  expect([0, 1, 6].map(es.runs)).toEqual(['0 ejecuciones', '1 ejecución', '6 ejecuciones'])
 })
 
 test('the unavailable pane is put in each language', async () => {
@@ -92,7 +100,6 @@ test('the unavailable pane is put in each language', async () => {
 })
 
 test('the English texts are the ones the radar always had', async () => {
-  expect(en.phase).toEqual({ working: 'Working', needsYou: 'Needs you', stuck: 'Stuck', stopped: 'Stopped', done: 'All done' })
   expect(en.reason).toEqual({
     permission: 'Waiting for your permission',
     error: 'The turn ended with an error',
