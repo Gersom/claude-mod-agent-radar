@@ -639,7 +639,7 @@ export const register: Register = on => {
 
     /** A section's title, with an optional figure at the right and a mark before it, and a faint line under the title (as long as the title) that sets it apart from its content. */
     const heading = (mark: ReturnType<typeof markCell> | null, title: string, figure?: string) => (
-      <Box flexDirection="column">
+      <Box flexDirection="column" marginBottom={1}>
         <Box>
           {mark}
           <Box flexGrow={1} flexShrink={0}>
@@ -655,7 +655,7 @@ export const register: Register = on => {
             </Box>
           )}
         </Box>
-        <Box paddingLeft={mark === null ? 0 : 2}>
+        <Box>
           <Text wrap="truncate-end" dimColor>
             {TITLE_RULE.repeat(Math.max(1, Math.min(title.length, columns)))}
           </Text>
