@@ -134,7 +134,7 @@ Sin nada en marcha, la ejecución actual dice `Todo listo, esperando instruccion
 
 ## Qué muestra el panel
 
-Sin límite de filas (el motor lo desplaza); todo se trunca con `…` al ancho del panel. Dos secciones, separadas por una línea fina (`─`, atenuada, cortada al ancho: el kit de dibujo no permite un borde de un solo lado, así que es un `Text`):
+Sin límite de filas (el motor lo desplaza); todo se trunca con `…` al ancho del panel. Dos secciones, separadas por una fila en blanco (sin línea). Las líneas finas que quedan, dentro de la ejecución actual, son `─` atenuadas y cortadas al ancho (el kit de dibujo no permite un borde de un solo lado, así que son un `Text`):
 
 - **Current run** (ejecución actual): el turno en curso.
   - **Encabezado:** a la izquierda `●` y el título de la sección; a la derecha el tiempo total del turno y sus tokens (`Total time · 3m 36s · 19.8k tokens`; los tokens solo si los hay y el panel es ancho). El `●` es verde y parpadea con el temporizador mientras algo corre (amarillo si alguien te espera); cuando todo terminó queda quieto y atenuado con la marca del final (`✓`, `✗` o `■`), cosa que casi no se ve porque el turno se archiva en ese momento. Sin turno en curso, el `●` va atenuado.

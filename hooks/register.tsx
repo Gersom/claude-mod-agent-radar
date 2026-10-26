@@ -855,8 +855,7 @@ export const register: Register = on => {
             currentBlock(view.current)
           )}
         </Box>
-        {rule()}
-        <Box key="history-block" flexDirection="column">
+        <Box key="history-block" flexDirection="column" marginTop={1}>
           {heading(null, t.history, view.turns.length === 0 ? undefined : t.runs(view.turns.length))}
           {view.turns.length === 0 ? (
             <Text wrap="truncate-end" dimColor>

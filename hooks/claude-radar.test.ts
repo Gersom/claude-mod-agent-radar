@@ -3269,17 +3269,17 @@ test('the pane draws the heading, the total time and tokens, the active count, t
       expect(await ui.find({ type: 'Text', text: w.reading })).toBeDefined()
       expect(await ui.findAll({ type: 'Box', props: { paddingLeft: 2 } } as never)).not.toHaveLength(0)
 
-      // The rules: between the run and the history, before the subagents and between them; each cut to the width.
+      // The rules: before the subagents and between them (the run and the history are apart by a blank row); each cut to the width.
       const rules = await ui.findAll({ type: 'Text', text: /^─+$/ })
 
-      expect(rules).toHaveLength(3)
+      expect(rules).toHaveLength(2)
 
       for (const rule of rules) {
         expect(rule.props?.wrap).toBe('truncate-end')
         expect(rule.props?.dimColor).toBe(true)
         expect(rule.text.length).toBeLessThanOrEqual(60)
       }
-      expect(Math.max(...rules.map((rule: { text: string }) => rule.text.length))).toBe(60)
+      expect(Math.max(...rules.map((rule: { text: string }) => rule.text.length))).toBe(58)
       expect(await ui.find({ type: 'Text', text: w.none })).toBeDefined()
       await ui.unmount()
     }
@@ -3299,8 +3299,8 @@ test('the pane draws the heading, the total time and tokens, the active count, t
       expect(await ui.find({ type: 'Text', text: /^18\.4k$/ })).toBeDefined()
       expect(await ui.find({ type: 'Text', text: /^Building the login components$/ })).toBeDefined()
       expect(await ui.find({ type: 'Text', text: /^Reviewing authentication routes$/ })).toBeDefined()
-      // Only the rule between the run and the history: the one group has none above it.
-      expect(await ui.findAll({ type: 'Text', text: /^─+$/ })).toHaveLength(1)
+      // No rule at all: the run and the history are apart by a blank row, and the one group has none above it.
+      expect(await ui.findAll({ type: 'Text', text: /^─+$/ })).toHaveLength(0)
       // Nothing runs any more: no activity line is left, and the run is back to waiting.
       expect(await ui.find({ type: 'Text', text: w.reading })).toBeUndefined()
       expect(await ui.find({ type: 'Text', text: w.none })).toBeUndefined()
@@ -3363,9 +3363,9 @@ test('a narrow pane drops the tokens, then the status labels, then the bars; the
   }
 
   expect(TOKENS_MIN_COLUMNS).toBeGreaterThan(STATUS_MIN_COLUMNS)
-  expect(await shows(TOKENS_MIN_COLUMNS)).toMatchObject({ tokens: true, headerTokens: true, label: true, bar: true, widest: TOKENS_MIN_COLUMNS })
+  expect(await shows(TOKENS_MIN_COLUMNS)).toMatchObject({ tokens: true, headerTokens: true, label: true, bar: true, widest: TOKENS_MIN_COLUMNS - 2 })
   expect(await shows(TOKENS_MIN_COLUMNS - 1)).toMatchObject({ tokens: false, headerTokens: false, label: true, bar: true })
   expect(await shows(STATUS_MIN_COLUMNS)).toMatchObject({ tokens: false, label: true })
-  expect(await shows(STATUS_MIN_COLUMNS - 1)).toMatchObject({ tokens: false, label: false, widest: STATUS_MIN_COLUMNS - 1 })
-  expect(await shows(24)).toMatchObject({ tokens: false, label: false, bar: false, widest: 24 })
+  expect(await shows(STATUS_MIN_COLUMNS - 1)).toMatchObject({ tokens: false, label: false, widest: STATUS_MIN_COLUMNS - 3 })
+  expect(await shows(24)).toMatchObject({ tokens: false, label: false, bar: false, widest: 22 })
 })
