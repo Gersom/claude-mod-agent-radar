@@ -58,6 +58,9 @@ const TONE = {
   done: '#22c55e'
 } as const
 
+/** The character of the faint line under a section's title: lighter than the `─` of the lines inside the run. */
+const TITLE_RULE = '╌'
+
 const GREEN = '#22c55e'
 const ACTIVE = '#38bdf8'
 
@@ -634,22 +637,27 @@ export const register: Register = on => {
       </Box>
     )
 
-    /** A section's title, with an optional figure at the right and a mark before it. */
+    /** A section's title, with an optional figure at the right and a mark before it, and a faint line under the whole row that sets it apart from its content. */
     const heading = (mark: ReturnType<typeof markCell> | null, title: string, figure?: string) => (
-      <Box>
-        {mark}
-        <Box flexGrow={1} flexShrink={0}>
-          <Text wrap="truncate-end" bold>
-            {title}
-          </Text>
-        </Box>
-        {figure === undefined ? null : (
-          <Box flexShrink={1} marginLeft={2}>
-            <Text wrap="truncate-end" dimColor>
-              {figure}
+      <Box flexDirection="column">
+        <Box>
+          {mark}
+          <Box flexGrow={1} flexShrink={0}>
+            <Text wrap="truncate-end" bold>
+              {title}
             </Text>
           </Box>
-        )}
+          {figure === undefined ? null : (
+            <Box flexShrink={1} marginLeft={2}>
+              <Text wrap="truncate-end" dimColor>
+                {figure}
+              </Text>
+            </Box>
+          )}
+        </Box>
+        <Text wrap="truncate-end" dimColor>
+          {TITLE_RULE.repeat(Math.max(1, columns))}
+        </Text>
       </Box>
     )
 

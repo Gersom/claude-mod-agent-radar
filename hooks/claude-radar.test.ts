@@ -3369,3 +3369,24 @@ test('a narrow pane drops the tokens, then the status labels, then the bars; the
   expect(await shows(STATUS_MIN_COLUMNS - 1)).toMatchObject({ tokens: false, label: false, widest: STATUS_MIN_COLUMNS - 3 })
   expect(await shows(24)).toMatchObject({ tokens: false, label: false, bar: false, widest: 22 })
 })
+
+test('each section title has a faint line under it, cut to the width', async ($, on) => {
+  squad(on, 'a1')
+
+  await begin($)
+
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await paneView($, 40, surface)
+    const lines = await ui.findAll({ type: 'Text', text: /^╌+$/ })
+
+    // One under «Current run», one under «History».
+    expect(lines).toHaveLength(2)
+
+    for (const line of lines) {
+      expect(line.props?.wrap).toBe('truncate-end')
+      expect(line.props?.dimColor).toBe(true)
+      expect(line.text.length).toBe(40)
+    }
+    await ui.unmount()
+  }
+})
