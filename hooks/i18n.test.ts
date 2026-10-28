@@ -52,15 +52,15 @@ test('each language has its own texts, and a word for everything', async () => {
 })
 
 test('the name is a proper name: the same in both languages', async () => {
-  expect(NAME).toBe('Claude Radar')
+  expect(NAME).toBe('Agent Radar')
   expect(es.name).toBe(NAME)
   expect(en.name).toBe(NAME)
 })
 
 test('the buttons and the toast say ON and OFF the way the button does', async () => {
   for (const texts of [es, en]) {
-    expect(texts.toggle(true)).toBe('Claude Radar: ON')
-    expect(texts.toggle(false)).toBe('Claude Radar: OFF')
+    expect(texts.toggle(true)).toBe('Agent Radar: ON')
+    expect(texts.toggle(false)).toBe('Agent Radar: OFF')
   }
   expect([es.detail, es.close]).toEqual(['Detalle', 'Cerrar'])
   expect([en.detail, en.close]).toEqual(['Detail', 'Close'])
@@ -121,12 +121,12 @@ test('the English texts are the ones the radar always had', async () => {
 })
 
 test('the command has a description, answers and a usage in each language, naming both arguments', async () => {
-  expect(en.commandDescription).toBe('Open or close the Claude Radar detail pane, or show or hide its band.')
-  expect(es.commandDescription).toBe('Abre o cierra el panel de detalle de Claude Radar, o muestra u oculta su banda.')
+  expect(en.commandDescription).toBe('Open or close the Agent Radar detail pane, or show or hide its band.')
+  expect(es.commandDescription).toBe('Abre o cierra el panel de detalle de Agent Radar, o muestra u oculta su banda.')
   expect(en.commandUsage).toBe('Usage: /agent-radar [open|close|hide|show]. With no argument, it toggles the pane.')
   expect(es.commandUsage).toBe('Uso: /agent-radar [open|close|hide|show]. Sin argumento, alterna el panel.')
   expect([en.paneOpened, en.paneClosed]).toEqual(['Detail pane opened', 'Detail pane closed'])
   expect([es.paneOpened, es.paneClosed]).toEqual(['Panel de detalle abierto', 'Panel de detalle cerrado'])
-  expect(en.radarOff).toBe('Claude Radar is OFF. Turn it on with its button.')
+  expect(en.radarOff).toBe('Agent Radar is OFF. Turn it on with its button.')
   expect(es.radarOff).toMatch(/OFF/)
 })

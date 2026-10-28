@@ -9,7 +9,7 @@ export type Texts = {
   detail: string
   /** `Close` (`Cerrar`): the same button while the pane is open. */
   close: string
-  /** `Claude Radar: ON`: the ON/OFF button's text, and the toast that says the choice changed. */
+  /** `Agent Radar: ON`: the ON/OFF button's text, and the toast that says the choice changed. */
   toggle: (enabled: boolean) => string
   /** The toast for a surface that places no panes; `reason` is the engine's own words, as it gave them. */
   paneUnavailable: (reason: string | null) => string
@@ -62,7 +62,7 @@ export type Texts = {
 }
 
 /** The mod's proper name, which is not translated; also the pane's title. */
-export const NAME = 'Claude Radar'
+export const NAME = 'Agent Radar'
 
 /** The language the radar speaks when settings.language names none it knows. */
 export const DEFAULT_LANG: Lang = 'en'
@@ -74,7 +74,7 @@ export const TEXTS: Record<Lang, Texts> = {
     detail: 'Detalle',
     close: 'Cerrar',
     hide: 'Ocultar',
-    toggle: enabled => `Claude Radar: ${enabled ? 'ON' : 'OFF'}`,
+    toggle: enabled => `Agent Radar: ${enabled ? 'ON' : 'OFF'}`,
     paneUnavailable: reason => `El panel de detalle no está disponible aquí${reason ? `: ${reason}` : ''}`,
     currentRun: 'Ejecución actual',
     mainAgent: 'Agente principal',
@@ -102,11 +102,11 @@ export const TEXTS: Record<Lang, Texts> = {
     },
     defaultTitle: 'Trabajando en tu petición',
     workingOnIt: 'En ello',
-    commandDescription: 'Abre o cierra el panel de detalle de Claude Radar, o muestra u oculta su banda.',
+    commandDescription: 'Abre o cierra el panel de detalle de Agent Radar, o muestra u oculta su banda.',
     commandUsage: 'Uso: /agent-radar [open|close|hide|show]. Sin argumento, alterna el panel.',
     paneOpened: 'Panel de detalle abierto',
     paneClosed: 'Panel de detalle cerrado',
-    radarOff: 'Claude Radar está apagado (OFF). Enciéndelo con su botón.',
+    radarOff: 'Agent Radar está apagado (OFF). Enciéndelo con su botón.',
     bandHidden: 'Banda oculta. Vuelve a mostrarla con /agent-radar show',
     bandShown: 'Banda visible'
   },
@@ -116,7 +116,7 @@ export const TEXTS: Record<Lang, Texts> = {
     detail: 'Detail',
     close: 'Close',
     hide: 'Hide',
-    toggle: enabled => `Claude Radar: ${enabled ? 'ON' : 'OFF'}`,
+    toggle: enabled => `Agent Radar: ${enabled ? 'ON' : 'OFF'}`,
     paneUnavailable: reason => `The detail pane is not available here${reason ? `: ${reason}` : ''}`,
     currentRun: 'Current run',
     mainAgent: 'Main agent',
@@ -144,11 +144,11 @@ export const TEXTS: Record<Lang, Texts> = {
     },
     defaultTitle: 'Working on your request',
     workingOnIt: 'Working on it',
-    commandDescription: 'Open or close the Claude Radar detail pane, or show or hide its band.',
+    commandDescription: 'Open or close the Agent Radar detail pane, or show or hide its band.',
     commandUsage: 'Usage: /agent-radar [open|close|hide|show]. With no argument, it toggles the pane.',
     paneOpened: 'Detail pane opened',
     paneClosed: 'Detail pane closed',
-    radarOff: 'Claude Radar is OFF. Turn it on with its button.',
+    radarOff: 'Agent Radar is OFF. Turn it on with its button.',
     bandHidden: 'Band hidden. Bring it back with /agent-radar show',
     bandShown: 'Band shown'
   }

@@ -291,7 +291,7 @@ const hideBand = async ($: EngineInterface) => {
   $.ui.toast((await textsFor($)).bandHidden)
 }
 
-/** Claude Radar: a passive monitor of the main agent and its subagents. It only watches the events go by and draws; nothing it sees is changed. */
+/** Agent Radar: a passive monitor of the main agent and its subagents. It only watches the events go by and draws; nothing it sees is changed. */
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await ensureEnabled($)

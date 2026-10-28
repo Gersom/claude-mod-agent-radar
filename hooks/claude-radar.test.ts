@@ -97,7 +97,7 @@ test('the button shows ON at the start, on every surface that draws the band', a
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ plugin: 'agent-radar', surface, ...BAND })
 
-    expect(await ui.find({ type: 'Button', text: /Claude Radar: ON/ })).toBeDefined()
+    expect(await ui.find({ type: 'Button', text: /Agent Radar: ON/ })).toBeDefined()
     expect(await ui.find({ type: 'Button', key: 'toggle' })).toBeDefined()
     await ui.unmount()
   }
@@ -112,15 +112,15 @@ test('pressing the button turns it off and on, saves the choice and says so', as
 
   await ui.press({ key: 'toggle' })
 
-  expect(await ui.find({ type: 'Button', text: /Claude Radar: OFF/ })).toBeDefined()
+  expect(await ui.find({ type: 'Button', text: /Agent Radar: OFF/ })).toBeDefined()
   expect(entries.get('enabled')).toBe(false)
-  expect(toasts).toEqual(['Claude Radar: OFF'])
+  expect(toasts).toEqual(['Agent Radar: OFF'])
 
   await ui.press({ key: 'toggle' })
 
-  expect(await ui.find({ type: 'Button', text: /Claude Radar: ON/ })).toBeDefined()
+  expect(await ui.find({ type: 'Button', text: /Agent Radar: ON/ })).toBeDefined()
   expect(entries.get('enabled')).toBe(true)
-  expect(toasts).toEqual(['Claude Radar: OFF', 'Claude Radar: ON'])
+  expect(toasts).toEqual(['Agent Radar: OFF', 'Agent Radar: ON'])
   await ui.unmount()
 })
 
@@ -133,7 +133,7 @@ test('a new session restores the saved choice: the button is still visible when 
 
   const ui = await $.ui.mount({ plugin: 'agent-radar', surface: 'terminal', ...BAND })
 
-  expect(await ui.find({ type: 'Button', text: /Claude Radar: OFF/ })).toBeDefined()
+  expect(await ui.find({ type: 'Button', text: /Agent Radar: OFF/ })).toBeDefined()
   expect(await ui.find({ type: 'Button', key: 'toggle' })).toBeDefined()
   await ui.unmount()
 })
@@ -158,7 +158,7 @@ test('registers one slash command, /agent-radar, and no other', async ($, on) =>
 
   await $.session.start({ cwd: '/work', surface: 'terminal', isInteractive: true })
 
-  expect(commands).toEqual([{ name: 'agent-radar', description: 'Open or close the Claude Radar detail pane, or show or hide its band.', argumentHint: '[open|close|hide|show]' }])
+  expect(commands).toEqual([{ name: 'agent-radar', description: 'Open or close the Agent Radar detail pane, or show or hide its band.', argumentHint: '[open|close|hide|show]' }])
   expect(commands.map(command => command.name)).not.toContain('radar')
   expect(commands.map(command => command.name)).not.toContain('simple')
 })
@@ -490,7 +490,7 @@ const paneView = ($: any, bodyColumns = 60, surface: 'terminal' | 'desktop' = 't
     surface,
     component: 'Pane',
     requestId: 'agent-radar',
-    props: { title: 'Claude Radar', isFocused: false, bodyColumns, placement: surface === 'desktop' ? 'dock' : 'inline' } as never
+    props: { title: 'Agent Radar', isFocused: false, bodyColumns, placement: surface === 'desktop' ? 'dock' : 'inline' } as never
   } as never)
 
 type PaneNode = { type: string; props?: Record<string, unknown>; text?: string; children?: (PaneNode | string)[] }
@@ -565,13 +565,13 @@ test('the band is one line, the name and the two buttons, before any turn and wh
     for (const bodyColumns of [30, 80]) {
       const ui = await band($, bodyColumns, surface)
 
-      expect(await textsOf(ui)).toEqual(['Claude Radar'])
+      expect(await textsOf(ui)).toEqual(['Agent Radar'])
 
-      const name = await ui.find({ type: 'Text', text: /^Claude Radar$/ })
+      const name = await ui.find({ type: 'Text', text: /^Agent Radar$/ })
 
       expect(name?.props).toMatchObject({ bold: true, dimColor: true, wrap: 'truncate-end' })
       expect(await ui.find({ type: 'Button', key: 'pane', text: /^\[ ◧ Detail \]$/ })).toBeDefined()
-      expect(await ui.find({ type: 'Button', key: 'toggle', text: /Claude Radar: ON/ })).toBeDefined()
+      expect(await ui.find({ type: 'Button', key: 'toggle', text: /Agent Radar: ON/ })).toBeDefined()
       expect(await isFramed(ui)).toBe(false)
       await ui.unmount()
     }
@@ -590,16 +590,16 @@ test('the band shows nothing of the work, in ON and in OFF: only the name and th
   const ui = await band($)
 
   // Working, asking, with a checklist and a subagent: still the name alone.
-  expect(await textsOf(ui)).toEqual(['Claude Radar'])
+  expect(await textsOf(ui)).toEqual(['Agent Radar'])
   expect(await isFramed(ui)).toBe(false)
 
   await finish($, 'error')
-  expect(await textsOf(ui)).toEqual(['Claude Radar'])
+  expect(await textsOf(ui)).toEqual(['Agent Radar'])
 
   await ui.press({ key: 'toggle' })
-  expect(await textsOf(ui)).toEqual(['Claude Radar'])
+  expect(await textsOf(ui)).toEqual(['Agent Radar'])
   expect(await ui.find({ type: 'Button', key: 'pane' })).toBeUndefined()
-  expect(await ui.find({ type: 'Button', key: 'toggle', text: /Claude Radar: OFF/ })).toBeDefined()
+  expect(await ui.find({ type: 'Button', key: 'toggle', text: /Agent Radar: OFF/ })).toBeDefined()
   await ui.unmount()
 })
 
@@ -993,14 +993,14 @@ test('OFF leaves the band with the name and the ON/OFF button, keeps the state, 
   const pane = await paneView($)
 
   await ui.press({ key: 'toggle' })
-  expect(await ui.find({ type: 'Button', text: /Claude Radar: OFF/ })).toBeDefined()
-  expect(await textsOf(ui)).toEqual(['Claude Radar'])
+  expect(await ui.find({ type: 'Button', text: /Agent Radar: OFF/ })).toBeDefined()
+  expect(await textsOf(ui)).toEqual(['Agent Radar'])
   expect(await isFramed(ui)).toBe(false)
 
   // The state is kept while it is off.
   await finish($)
   await ui.press({ key: 'toggle' })
-  expect(await ui.find({ type: 'Button', text: /Claude Radar: ON/ })).toBeDefined()
+  expect(await ui.find({ type: 'Button', text: /Agent Radar: ON/ })).toBeDefined()
   expect(await pane.find({ type: 'Text', text: /^All done, ready for more instructions$/ })).toBeDefined()
   expect(await pane.find({ type: 'Text', text: /^Build my landing page$/ })).toBeDefined()
   await ui.unmount()
@@ -1131,7 +1131,7 @@ test('yields to a survey in the middle of a turn', async ($, on) => {
   })
 
   expect(await ui.find({ type: 'Button', key: 'toggle' })).toBeUndefined()
-  expect(await ui.find({ type: 'Text', text: /Claude Radar/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /Agent Radar/ })).toBeUndefined()
   await ui.unmount()
 })
 
@@ -1156,7 +1156,7 @@ test('keeps what another hook of the band draws, working or finished', { plugins
   const ui = await band($)
 
   expect(await ui.find({ type: 'Text', text: /OTHER BAND/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^Claude Radar$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^Agent Radar$/ })).toBeDefined()
 
   await finish($)
   expect(await ui.find({ type: 'Text', text: /OTHER BAND/ })).toBeDefined()
@@ -1630,7 +1630,7 @@ test('OFF keeps the subagents in the state, and ON brings them back to the pane'
   const pane = await mount($)
 
   await ui.press({ key: 'toggle' })
-  expect(await textsOf(ui)).toEqual(['Claude Radar'])
+  expect(await textsOf(ui)).toEqual(['Agent Radar'])
 
   await ui.press({ key: 'toggle' })
   expect(await pane.find({ type: 'Text', text: /^frontend-developer$/ })).toBeDefined()
@@ -1727,9 +1727,9 @@ test('with settings.language in Spanish the band and the pane speak Spanish, nam
   const ui = await band($)
 
   // The proper name stays; the buttons speak Spanish.
-  expect(await textsOf(ui)).toEqual(['Claude Radar'])
+  expect(await textsOf(ui)).toEqual(['Agent Radar'])
   expect(await ui.find({ type: 'Button', key: 'pane', text: /^\[ ◧ Detalle \]$/ })).toBeDefined()
-  expect(await ui.find({ type: 'Button', key: 'toggle', text: /^\[ ● Claude Radar: ON \]$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Button', key: 'toggle', text: /^\[ ● Agent Radar: ON \]$/ })).toBeDefined()
   await ui.unmount()
 
   const pane = await paneView($)
@@ -1923,7 +1923,7 @@ test('the toasts speak the language: the ON/OFF change and the pane that cannot 
 
   await ui.press({ key: 'toggle' })
   await ui.press({ key: 'toggle' })
-  expect(toasts.slice(1)).toEqual(['Claude Radar: OFF', 'Claude Radar: ON'])
+  expect(toasts.slice(1)).toEqual(['Agent Radar: OFF', 'Agent Radar: ON'])
   await ui.unmount()
 })
 
@@ -2003,7 +2003,7 @@ test('with the radar OFF the command says so and opens nothing; back ON it opens
   await ui.press({ key: 'toggle' })
 
   for (const args of ['', 'open', 'close']) {
-    expect(await agentRadar($, args)).toEqual({ text: 'Claude Radar is OFF. Turn it on with its button.' })
+    expect(await agentRadar($, args)).toEqual({ text: 'Agent Radar is OFF. Turn it on with its button.' })
   }
   expect(calls).toEqual([])
   expect(await agentRadar($, 'bogus')).toEqual({ text: 'Usage: /agent-radar [open|close|hide|show]. With no argument, it toggles the pane.' })
@@ -2061,7 +2061,7 @@ test('the command speaks the language of settings.language: its description and 
   on('settings.read', spanish)
   await $.session.start({ cwd: '/work', surface: 'terminal', isInteractive: true })
 
-  expect(commands[0]).toEqual({ name: 'agent-radar', description: 'Abre o cierra el panel de detalle de Claude Radar, o muestra u oculta su banda.', argumentHint: '[open|close|hide|show]' })
+  expect(commands[0]).toEqual({ name: 'agent-radar', description: 'Abre o cierra el panel de detalle de Agent Radar, o muestra u oculta su banda.', argumentHint: '[open|close|hide|show]' })
   expect(await agentRadar($)).toEqual({ text: 'Panel de detalle abierto' })
   expect(await agentRadar($)).toEqual({ text: 'Panel de detalle cerrado' })
   expect(await agentRadar($, 'otra')).toEqual({ text: 'Uso: /agent-radar [open|close|hide|show]. Sin argumento, alterna el panel.' })
@@ -2069,7 +2069,7 @@ test('the command speaks the language of settings.language: its description and 
   const ui = await band($)
 
   await ui.press({ key: 'toggle' })
-  expect(await agentRadar($)).toEqual({ text: 'Claude Radar está apagado (OFF). Enciéndelo con su botón.' })
+  expect(await agentRadar($)).toEqual({ text: 'Agent Radar está apagado (OFF). Enciéndelo con su botón.' })
   await ui.unmount()
 })
 
@@ -2722,14 +2722,14 @@ test('the detail button opens the pane and closes it, and its label follows', as
 
   await ui.press({ key: 'pane' })
   expect(calls).toEqual(['open agent-radar'])
-  expect(opened[0]).toMatchObject({ id: 'agent-radar', title: 'Claude Radar', rows: 14, columns: 60 })
+  expect(opened[0]).toMatchObject({ id: 'agent-radar', title: 'Agent Radar', rows: 14, columns: 60 })
   expect(await ui.find({ type: 'Button', key: 'pane', text: /^\[ ◧ Close \]$/ })).toBeDefined()
 
   await ui.press({ key: 'pane' })
   expect(calls).toEqual(['open agent-radar', 'close agent-radar'])
   expect(await ui.find({ type: 'Button', key: 'pane', text: /^\[ ◧ Detail \]$/ })).toBeDefined()
   // The detail button sits to the left of the ON/OFF button.
-  expect(await ui.find({ type: 'Button', key: 'toggle', text: /Claude Radar: ON/ })).toBeDefined()
+  expect(await ui.find({ type: 'Button', key: 'toggle', text: /Agent Radar: ON/ })).toBeDefined()
   await ui.unmount()
 })
 
@@ -2782,7 +2782,7 @@ test('OFF closes the pane and leaves only the ON/OFF button; ON brings the detai
   await ui.press({ key: 'toggle' })
   expect(calls).toEqual(['open agent-radar', 'close agent-radar'])
   expect(await ui.find({ type: 'Button', key: 'pane' })).toBeUndefined()
-  expect(await ui.find({ type: 'Button', key: 'toggle', text: /Claude Radar: OFF/ })).toBeDefined()
+  expect(await ui.find({ type: 'Button', key: 'toggle', text: /Agent Radar: OFF/ })).toBeDefined()
 
   await ui.press({ key: 'toggle' })
   expect(await ui.find({ type: 'Button', key: 'pane', text: /Detail/ })).toBeDefined()
@@ -3018,7 +3018,7 @@ test('the desktop surface draws the pane too, and it only reads: the state is as
     surface: 'desktop',
     component: 'Pane',
     requestId: 'agent-radar',
-    props: { title: 'Claude Radar', isFocused: false, bodyColumns: 60, placement: 'dock' } as never
+    props: { title: 'Agent Radar', isFocused: false, bodyColumns: 60, placement: 'dock' } as never
   } as never)
 
   expect(await ui.find({ type: 'Text', text: /^Current run$/ })).toBeDefined()

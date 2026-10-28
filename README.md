@@ -1,10 +1,10 @@
 # agent-radar
 
-Hook para Claude Code que muestra el trabajo en curso de Claude y de sus subagentes en un **panel de detalle** y deja sobre el prompt solo una línea mínima: el nombre «Claude Radar» y dos botones. Mientras Claude trabaja, oculta visualmente las filas técnicas (llamadas a herramientas y sus resultados) y las devuelve al terminar. El título visible es **Claude Radar**.
+Hook para Claude Code que muestra el trabajo en curso de Claude y de sus subagentes en un **panel de detalle** y deja sobre el prompt solo una línea mínima: el nombre «Agent Radar» y dos botones. Mientras Claude trabaja, oculta visualmente las filas técnicas (llamadas a herramientas y sus resultados) y las devuelve al terminar. El título visible es **Agent Radar**.
 
 ## Nombre
 
-El identificador del plugin es `agent-radar`: el prefijo `claude-` está reservado. En pantalla se llama «Claude Radar» (el botón dice `Claude Radar: ON/OFF`). La especificación original lo nombra `claude-radar`; ese es el nombre de su documento y del archivo de lógica (`hooks/claude-radar.tsx`), no el del plugin.
+El identificador del plugin es `agent-radar`: el prefijo `claude-` está reservado. En pantalla se llama «Agent Radar» (el botón dice `Agent Radar: ON/OFF`). La especificación original lo nombra `claude-radar`; ese es el nombre de su documento y del archivo de lógica (`hooks/claude-radar.tsx`), no el del plugin.
 
 ## Por qué
 
@@ -17,11 +17,11 @@ Con muchas llamadas a herramientas y varios subagentes en paralelo, la conversac
 Una sola línea, sin borde: el nombre a la izquierda y los botones a la derecha. Nada más: ni título, ni tiempo, ni estados, ni listas.
 
 ```
-Claude Radar                         [ ◧ Detail ] [ ● Claude Radar: ON ] [ ✕ Hide ]
+Agent Radar                         [ ◧ Detail ] [ ● Agent Radar: ON ] [ ✕ Hide ]
 ```
 
 - El botón `[ ◧ Detail ]` abre el panel de detalle (y pasa a `[ ◧ Close ]` mientras está abierto). Solo se ve con el radar en `ON`.
-- Con el radar en `OFF`: `Claude Radar`, `[ ● Claude Radar: OFF ]` y `[ ✕ Hide ]`.
+- Con el radar en `OFF`: `Agent Radar`, `[ ● Agent Radar: OFF ]` y `[ ✕ Hide ]`.
 - El botón `[ ✕ Hide ]` quita la banda de la barra del prompt (no apaga el radar: el panel y el ocultar filas técnicas siguen según ON/OFF). Para devolverla: `/agent-radar show`. La elección se guarda en `$.store` (clave `bandHidden`) y sobrevive a las sesiones.
 - Si falta ancho se corta el nombre (`…`) antes que los botones: los botones nunca se encogen.
 - Cede ante una encuesta (`hasSurvey`) y respeta lo que dibujen debajo otros hooks de la banda.
@@ -96,9 +96,9 @@ Abre y cierra el mismo panel de detalle, para quien prefiere teclear, y muestra 
 | `/agent-radar show` | devuelve la banda | `Band shown` |
 | `/agent-radar <otra cosa>` | no cambia nada | `Usage: /agent-radar [open|close|hide|show]. With no argument, it toggles the pane.` |
 
-- Con el radar en `OFF` responde `Claude Radar is OFF. Turn it on with its button.` y no abre nada.
+- Con el radar en `OFF` responde `Agent Radar is OFF. Turn it on with its button.` y no abre nada.
 - Si la superficie no coloca paneles, la respuesta y un aviso dicen el motivo (`The detail pane is not available here: <motivo>`) y no queda ningún panel esperando.
-- Las respuestas y la descripción del comando van en el idioma detectado (ver «Idioma»); en español: `Panel de detalle abierto` / `Panel de detalle cerrado`, `Uso: /agent-radar [open|close]. Sin argumento, alterna el panel.` y `Claude Radar está apagado (OFF). Enciéndelo con su botón.`
+- Las respuestas y la descripción del comando van en el idioma detectado (ver «Idioma»); en español: `Panel de detalle abierto` / `Panel de detalle cerrado`, `Uso: /agent-radar [open|close]. Sin argumento, alterna el panel.` y `Agent Radar está apagado (OFF). Enciéndelo con su botón.`
 - Se registra al empezar la sesión (`session.start`) y se atiende con un hook `command.run`. **Es el único comando del mod**: la especificación original prohibía crear comandos (`/simple`, `/radar` y similares) y el control era solo por botones; este comando lo pidió expresamente el operador. `/simple` y `/radar` siguen sin existir, y el radar no se enciende ni se apaga con comandos: eso es solo del botón ON/OFF.
 - **Cómo decide sin leer el estado:** para que el motor cuente la apertura como petición de la persona, `$.ui.open` tiene que ser el primer paso asíncrono del comando. Por eso decide con dos variables del módulo (si el panel está abierto y si el radar está en `ON`) que reflejan los átomos; `session.start` las vuelve a leer tras una recarga del mod. Si quedaran desfasadas, el peor caso es un `$.ui.open` sobre un panel ya abierto, que el motor solo retitula.
 - La respuesta del comando es una línea que queda en la conversación y el modelo lee con el siguiente mensaje (unos pocos tokens, solo cuando tú lo ejecutas); el resto del mod no escribe nada en la conversación.
@@ -109,7 +109,7 @@ La interfaz habla español o inglés, con diccionarios fijos en `hooks/i18n.ts`:
 
 - **Automático:** lee `settings.language` (`$.settings.read()`) una vez por carga del mod y otra vez en cada sesión nueva (`session.end` lo olvida), y lo guarda en el estado (`claudeRadarLang`). Si cambias el ajuste a mitad de una sesión, no se recarga hasta la siguiente. Es texto libre, así que reconoce el español en varias formas (`Español`, `spanish`, `es`, `es-MX`, `castellano`, sin importar mayúsculas ni tildes).
 - **Por defecto, inglés:** si no hay `settings.language`, no se puede leer o nombra un idioma que el mod no tiene, va en inglés.
-- **El nombre propio no se traduce:** «Claude Radar» es igual en ambos idiomas.
+- **El nombre propio no se traduce:** «Agent Radar» es igual en ambos idiomas.
 - **Lo que viene del texto de la persona o de los agentes no se traduce:** el título del turno, los nombres de las tareas, los nombres de los agentes y las tareas delegadas se muestran tal cual.
 - **El estado no guarda frases:** las razones (`permission`, `error`, `refusal`) y las actividades (`reading`, `searching`, `updating`, `testing`, `command`, `delegating`) son códigos, y el título por defecto y los nombres vacíos son `null` o vacío; el dibujo los pone en palabras en el idioma vigente.
 - **Agregar otro idioma:** un diccionario más en `TEXTS` (`hooks/i18n.ts`), su código en `Lang` (`types/index.d.ts`) y cómo se reconoce en `detectLang`.
@@ -117,7 +117,7 @@ La interfaz habla español o inglés, con diccionarios fijos en `hooks/i18n.ts`:
 Con `settings.language` en español, la banda y el panel se ven así:
 
 ```
-Claude Radar                         [ ◧ Detalle ] [ ● Claude Radar: ON ] [ ✕ Ocultar ]
+Agent Radar                         [ ◧ Detalle ] [ ● Agent Radar: ON ] [ ✕ Ocultar ]
 ```
 
 ```text
@@ -260,8 +260,8 @@ Si empieza un turno nuevo mientras el anterior sigue abierto (el principal ya te
 ## Botón ON/OFF
 
 - El radar se enciende y se apaga **solo con su botón**: no hay comandos `/simple` ni `/radar`, y `/agent-radar` solo abre y cierra el panel.
-- El botón `[ ● Claude Radar: ON ]` se ve siempre: en `OFF`, sin turno y con Claude inactivo.
-- Al pulsarlo muestra un aviso breve (`Claude Radar: ON` / `Claude Radar: OFF`).
+- El botón `[ ● Agent Radar: ON ]` se ve siempre: en `OFF`, sin turno y con Claude inactivo.
+- Al pulsarlo muestra un aviso breve (`Agent Radar: ON` / `Agent Radar: OFF`).
 - Estado inicial: `ON`. La elección se guarda en `$.store` (clave `enabled`, el almacén propio del mod, local de cada equipo) y se restaura al empezar la sesión. Si el almacén no se puede leer o escribir, rige `ON` y el cambio vale igual para la sesión.
 - En `OFF` se restaura la interfaz normal de Claude Code (las filas técnicas vuelven), se cierra el panel y desaparece el botón de detalle.
 
