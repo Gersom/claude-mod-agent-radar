@@ -543,7 +543,7 @@ export const register: Register = on => {
   // The band is one line: the name and the two buttons. All the content is in the detail pane, which only a press of the button opens:
   // a pane the mod opened by itself would not be placed under 144 columns, so nothing is ever opened unasked.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    // Other hooks' bands stay; a survey keeps the band to itself.
+    // Other hooks' bands stay above this row, so the repo's mods end up together at the prompt; a survey keeps the band to itself.
     const below = await next(e)
 
     if (e.props.hasSurvey || (await read($, bandHidden))) return below
@@ -562,6 +562,7 @@ export const register: Register = on => {
 
     return (
       <Box flexDirection="column">
+        {below}
         <Box>
           <Box flexGrow={1} flexShrink={1}>
             <Text wrap="truncate-end" bold dimColor>
@@ -584,7 +585,6 @@ export const register: Register = on => {
             </Button>
           </Box>
         </Box>
-        {below}
       </Box>
     )
   })
