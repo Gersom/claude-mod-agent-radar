@@ -23,7 +23,7 @@ export const initialState = (): ClaudeRadarState => ({
 export const resetSession = (state: ClaudeRadarState): ClaudeRadarState => ({ ...initialState(), claudeRadarEnabled: state.claudeRadarEnabled })
 
 /** The label of the ON/OFF button. */
-export const buttonLabel = (enabled: boolean, t: Texts) => `[ ● ${t.toggle(enabled)} ]`
+export const buttonLabel = (enabled: boolean) => `[ ● ${enabled ? 'ON' : 'OFF'} ]`
 
 /** How often the one timer ticks, in milliseconds: the animation's step. */
 export const TICK_MS = 250

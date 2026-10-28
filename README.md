@@ -4,7 +4,7 @@ Hook para Claude Code que muestra el trabajo en curso de Claude y de sus subagen
 
 ## Nombre
 
-El identificador del plugin es `agent-radar`: el prefijo `claude-` está reservado. En pantalla se llama «Agent Radar» (el botón dice `Agent Radar: ON/OFF`). La especificación original lo nombra `claude-radar`; ese es el nombre de su documento y del archivo de lógica (`hooks/claude-radar.tsx`), no el del plugin.
+El identificador del plugin es `agent-radar`: el prefijo `claude-` está reservado. En pantalla se llama «Agent Radar» (el botón dice `ON`/`OFF`). La especificación original lo nombra `claude-radar`; ese es el nombre de su documento y del archivo de lógica (`hooks/claude-radar.tsx`), no el del plugin.
 
 ## Por qué
 
@@ -17,11 +17,11 @@ Con muchas llamadas a herramientas y varios subagentes en paralelo, la conversac
 Una sola línea, sin borde: el nombre a la izquierda y los botones a la derecha. Nada más: ni título, ni tiempo, ni estados, ni listas.
 
 ```
-Agent Radar                         [ ◧ Detail ] [ ● Agent Radar: ON ] [ ✕ Hide ]
+Agent Radar                         [ ◧ Detail ] [ ● ON ] [ ✕ Hide ]
 ```
 
 - El botón `[ ◧ Detail ]` abre el panel de detalle (y pasa a `[ ◧ Close ]` mientras está abierto). Solo se ve con el radar en `ON`.
-- Con el radar en `OFF`: `Agent Radar`, `[ ● Agent Radar: OFF ]` y `[ ✕ Hide ]`.
+- Con el radar en `OFF`: `Agent Radar`, `[ ● OFF ]` y `[ ✕ Hide ]`.
 - El botón `[ ✕ Hide ]` quita la banda de la barra del prompt (no apaga el radar: el panel y el ocultar filas técnicas siguen según ON/OFF). Para devolverla: `/agent-radar show`. La elección se guarda en `$.store` (clave `bandHidden`) y sobrevive a las sesiones.
 - Si falta ancho se corta el nombre (`…`) antes que los botones: los botones nunca se encogen.
 - Cede ante una encuesta (`hasSurvey`) y respeta lo que dibujen debajo otros hooks de la banda.
@@ -117,7 +117,7 @@ La interfaz habla español o inglés, con diccionarios fijos en `hooks/i18n.ts`:
 Con `settings.language` en español, la banda y el panel se ven así:
 
 ```
-Agent Radar                         [ ◧ Detalle ] [ ● Agent Radar: ON ] [ ✕ Ocultar ]
+Agent Radar                         [ ◧ Detalle ] [ ● ON ] [ ✕ Ocultar ]
 ```
 
 ```text
@@ -260,7 +260,7 @@ Si empieza un turno nuevo mientras el anterior sigue abierto (el principal ya te
 ## Botón ON/OFF
 
 - El radar se enciende y se apaga **solo con su botón**: no hay comandos `/simple` ni `/radar`, y `/agent-radar` solo abre y cierra el panel.
-- El botón `[ ● Agent Radar: ON ]` se ve siempre: en `OFF`, sin turno y con Claude inactivo.
+- El botón `[ ● ON ]` se ve siempre: en `OFF`, sin turno y con Claude inactivo.
 - Al pulsarlo muestra un aviso breve (`Agent Radar: ON` / `Agent Radar: OFF`).
 - Estado inicial: `ON`. La elección se guarda en `$.store` (clave `enabled`, el almacén propio del mod, local de cada equipo) y se restaura al empezar la sesión. Si el almacén no se puede leer o escribir, rige `ON` y el cambio vale igual para la sesión.
 - En `OFF` se restaura la interfaz normal de Claude Code (las filas técnicas vuelven), se cierra el panel y desaparece el botón de detalle.

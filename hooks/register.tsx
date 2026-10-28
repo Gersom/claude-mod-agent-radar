@@ -556,7 +556,7 @@ export const register: Register = on => {
     // The ON/OFF button stays visible whether the radar is ON or OFF; the detail button only when ON, to its left.
     const toggle = (
       <Button key="toggle" plain dimColor onPress={() => void setEnabled($, !enabled)}>
-        {buttonLabel(enabled, t)}
+        {buttonLabel(enabled)}
       </Button>
     )
 
