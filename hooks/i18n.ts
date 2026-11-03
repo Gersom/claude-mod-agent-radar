@@ -29,6 +29,10 @@ export type Texts = {
   tokens: string
   /** `Subagents` (`Subagentes`): the title of the block of the turn's subagents. */
   subagents: string
+  /** `Background tasks` (`Tareas en segundo plano`): the title of the block of the turn's background tasks. */
+  background: string
+  /** `Background command` (`Comando en segundo plano`): the name of a background task whose text left nothing valid. */
+  backgroundFallback: string
   /** `3 active` (`3 activos`): how many subagents are at work, in the title of their block. */
   active: (count: number) => string
   /** `6 runs` (`6 ejecuciones`): how many turns the history holds, in its heading. */
@@ -84,6 +88,8 @@ export const TEXTS: Record<Lang, Texts> = {
     noFinished: 'Aún no hay turnos terminados',
     tokens: 'tokens',
     subagents: 'Subagentes',
+    background: 'Tareas en segundo plano',
+    backgroundFallback: 'Comando en segundo plano',
     active: count => (count === 1 ? '1 activo' : `${count} activos`),
     runs: count => (count === 1 ? '1 ejecución' : `${count} ejecuciones`),
     reason: {
@@ -126,6 +132,8 @@ export const TEXTS: Record<Lang, Texts> = {
     noFinished: 'No finished turns yet',
     tokens: 'tokens',
     subagents: 'Subagents',
+    background: 'Background tasks',
+    backgroundFallback: 'Background command',
     active: count => `${count} active`,
     runs: count => (count === 1 ? '1 run' : `${count} runs`),
     reason: {

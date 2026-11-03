@@ -8,10 +8,13 @@ import {
   advance,
   askSubagent,
   askUser,
+  backgroundActiveCount,
   bar,
   compactTokens,
   didRun,
   elapsed,
+  endBoundBackground,
+  finishBackground,
   finishSubagent,
   finishTurn,
   forceArchive,
@@ -29,6 +32,7 @@ import {
   stepModel,
   shortModel,
   detailOf,
+  startBackground,
   startTurn,
   statusFields,
   taskIdOf,
@@ -3608,4 +3612,748 @@ test('the history has no green: a finished turn and its agents are drawn in the 
     expect(done?.props?.color).toBeUndefined()
     await ui.unmount()
   }
+})
+
+const tasked = (state: ReturnType<typeof initialState>, id: string, name = 'npm run dev', now = 0, extra: object = {}) =>
+  startBackground(state, { id, name, ...extra }, now)
+
+/** The background tasks of a state as the pane's current run draws them; a turn is opened first when the state has none. */
+const tasksOf = (state: ReturnType<typeof initialState>, now = 99, t: Texts = en) =>
+  paneOf(state.checklist.startedAt === null ? startTurn(state, 'go', 0) : state, now, 0, t).current!.background
+
+test('a background task starts working under its own id with its name tidied, and a repeated id changes nothing', async () => {
+  const state = startBackground(initialState(), { id: 'b1', name: '  npm   run\n dev  ' }, 5000)
+
+  expect(state.background).toEqual({ b1: { id: 'b1', name: 'Npm run dev', status: 'working', startedAt: 5000, finishedAt: null } })
+  // The mark that it dies with the turn is kept only when the call says so.
+  expect(tasked(initialState(), 'b1', 'x', 0, { endsWithTurn: true }).background?.['b1']).toMatchObject({ endsWithTurn: true })
+  expect(tasked(initialState(), 'b1', 'x', 0, { endsWithTurn: false }).background?.['b1']).not.toHaveProperty('endsWithTurn')
+  // A name with nothing valid left (a path, code) is kept empty: the drawing puts the language's name.
+  expect(tasked(initialState(), 'b1', '/only/a/path `code`').background?.['b1']?.name).toBe('')
+  // Only the background changes.
+  expect(state.checklist).toEqual(initialState().checklist)
+  expect(state.subagents).toEqual({})
+
+  const two = tasked(state, 'b2', 'npm test', 6000)
+
+  expect(Object.keys(two.background ?? {})).toEqual(['b1', 'b2'])
+  expect(tasked(two, 'b1', 'other', 9000)).toBe(two)
+  // Ids are keys: a name every object inherits is not a task that is followed, and is a new one when it starts.
+  expect(Object.keys(tasked(two, 'constructor').background ?? {})).toEqual(['b1', 'b2', 'constructor'])
+
+  // A state saved before the radar followed them has no background at all.
+  const { background: _, ...old } = initialState()
+
+  expect(Object.keys(startBackground(old as never, { id: 'b1', name: 'x' }, 0).background ?? {})).toEqual(['b1'])
+})
+
+test('a background task ends done, failed or stopped by the word of its notification; one unknown or already finished changes nothing', async () => {
+  const state = tasked(tasked(tasked(initialState(), 'b1', 'one', 100), 'b2', 'two', 200), 'b3', 'three', 300)
+
+  const done = finishBackground(state, 'b1', 'completed', 1000)
+  const failed = finishBackground(state, 'b2', 'failed', 2000)
+  const stopped = finishBackground(state, 'b3', 'killed', 3000)
+
+  expect(done.background?.['b1']).toEqual({ id: 'b1', name: 'One', status: 'done', startedAt: 100, finishedAt: 1000 })
+  expect(failed.background?.['b2']).toMatchObject({ status: 'failed', finishedAt: 2000 })
+  expect(stopped.background?.['b3']).toMatchObject({ status: 'stopped', finishedAt: 3000 })
+  // Any other word is stopped, an empty one too; only the task named changes.
+  expect(finishBackground(state, 'b1', '', 1).background?.['b1']?.status).toBe('stopped')
+  expect(done.background?.['b2']).toEqual(state.background?.['b2'])
+  expect(done.background?.['b3']).toEqual(state.background?.['b3'])
+
+  // A task not followed (an id the radar never saw, or a name every object inherits), or one that already ended: the same state.
+  expect(finishBackground(state, 'zzz', 'completed', 5)).toBe(state)
+  expect(finishBackground(state, 'constructor', 'completed', 5)).toBe(state)
+  expect(finishBackground(initialState(), 'b1', 'completed', 5)).toEqual(initialState())
+  expect(finishBackground(done, 'b1', 'failed', 9999)).toBe(done)
+  expect(finishBackground(done, 'b1', 'failed', 9999).background?.['b1']).toMatchObject({ status: 'done', finishedAt: 1000 })
+
+  const { background: _, ...old } = initialState()
+
+  expect(finishBackground(old as never, 'b1', 'completed', 5)).toBe(old)
+})
+
+test('the end of the turn stops the background tasks that end with it, and the ones that do not go on', async () => {
+  const working = tasked(tasked(startTurn(initialState(), 'go', 0), 'b1', 'bound', 10, { endsWithTurn: true }), 'b2', 'free', 20)
+  const done = finishTurn(working, 'answer', 1000)
+
+  expect(done.background?.['b1']).toMatchObject({ status: 'stopped', finishedAt: 1000, endsWithTurn: true })
+  expect(done.background?.['b2']).toEqual({ id: 'b2', name: 'Free', status: 'working', startedAt: 20, finishedAt: null })
+
+  // Whatever the way the turn ends, the task that dies with it is over.
+  for (const reason of ['aborted', 'error', 'refusal'] as const) {
+    expect(finishTurn(working, reason, 500).background?.['b1']).toMatchObject({ status: 'stopped', finishedAt: 500 })
+    expect(finishTurn(working, reason, 500).background?.['b2']?.status).toBe('working')
+  }
+
+  // Nothing to stop: the very same state. A task that already ended keeps the time it ended at.
+  const free = tasked(startTurn(initialState(), 'go', 0), 'b2', 'free')
+  const ended = finishBackground(working, 'b1', 'completed', 300)
+
+  expect(endBoundBackground(free, 1000)).toBe(free)
+  expect(endBoundBackground(initialState(), 1000)).toEqual(initialState())
+  expect(endBoundBackground(ended, 1000)).toBe(ended)
+  expect(finishTurn(ended, 'answer', 1000).background?.['b1']).toMatchObject({ status: 'done', finishedAt: 300 })
+})
+
+test('settleTurn waits for the background tasks, and the last one to end archives the turn with them in start order', async () => {
+  let state = tasked(startTurn(initialState(), 'go', 0), 'b1', 'later', 100)
+
+  state = tasked(state, 'b2', 'earlier', 50)
+  state = finishTurn(state, 'answer', 1000)
+  // The main agent is done, but two background tasks are at work.
+  expect(settleTurn(state, 1000)).toBe(state)
+  expect(state.checklist.phase).toBe('done')
+
+  state = finishBackground(state, 'b1', 'completed', 2000)
+  expect(settleTurn(state, 2000)).toBe(state)
+
+  state = finishBackground(state, 'b2', 'failed', 3000)
+
+  const settled = settleTurn(state, 3000)
+
+  // The turn lasts until everything ended; the tasks are in start order, each as it ended.
+  expect(settled.turns[0]).toMatchObject({ status: 'done', startedAt: 0, finishedAt: 3000 })
+  expect(settled.turns[0]?.background?.map(task => [task.id, task.status, task.finishedAt])).toEqual([
+    ['b2', 'failed', 3000],
+    ['b1', 'done', 2000]
+  ])
+  expect(settled.turns[0]?.background?.[0]).toEqual({ id: 'b2', name: 'Earlier', status: 'failed', startedAt: 50, finishedAt: 3000 })
+  expect(settled.background).toEqual({})
+  expect(settled.checklist).toEqual(initialState().checklist)
+  expect(settleTurn(settled, 3500)).toBe(settled)
+
+  // A task that ended first leaves the turn to end with the main agent.
+  const early = finishBackground(tasked(startTurn(initialState(), 'go', 0), 'b1', 'x', 10), 'b1', 'completed', 500)
+
+  expect(settleTurn(early, 600)).toBe(early)
+  expect(settleTurn(finishTurn(early, 'answer', 1000), 1000).turns[0]?.finishedAt).toBe(1000)
+
+  // A task that dies with the turn does not hold it open.
+  const bound = finishTurn(tasked(startTurn(initialState(), 'go', 0), 'b1', 'x', 10, { endsWithTurn: true }), 'answer', 800)
+
+  expect(settleTurn(bound, 800).turns[0]).toMatchObject({ finishedAt: 800, background: [{ id: 'b1', status: 'stopped', endsWithTurn: true, finishedAt: 800 }] })
+
+  // A turn waiting for the person is not over because its task ended.
+  const waiting = finishBackground(tasked(askUser(startTurn(initialState(), 'go', 0)), 'b1'), 'b1', 'completed', 5)
+
+  expect(settleTurn(waiting, 5)).toBe(waiting)
+})
+
+test('a new turn keeps the background tasks at work out of the archived record; cutting the turn off stops them; a turn with no background tasks has no background field', async () => {
+  let state = tasked(startTurn(initialState(), 'first', 0), 'b1', 'running', 10)
+
+  state = finishBackground(tasked(state, 'b2', 'ended', 20), 'b2', 'completed', 30)
+  state = finishTurn(state, 'answer', 100)
+  // The main agent is done, b1 still works: the turn is open.
+  expect(state.turns).toEqual([])
+
+  const next = startTurn(state, 'second', 500)
+
+  expect(next.turns).toHaveLength(1)
+  expect(next.turns[0]).toMatchObject({ title: 'First', status: 'done', startedAt: 0, finishedAt: 100 })
+  // The archived turn has only the task that ended.
+  expect(next.turns[0]?.background?.map(task => [task.id, task.status, task.finishedAt])).toEqual([['b2', 'done', 30]])
+  // The one at work goes on in the new turn, as it was.
+  expect(next.background).toEqual({ b1: { id: 'b1', name: 'Running', status: 'working', startedAt: 10, finishedAt: null } })
+  expect(backgroundActiveCount(next.background)).toBe(1)
+  expect(next.checklist).toMatchObject({ title: 'Second', phase: 'working', startedAt: 500 })
+  // Its notification closes it there, and the new turn waits for the main agent.
+  expect(finishBackground(next, 'b1', 'completed', 600).background?.['b1']).toMatchObject({ status: 'done', finishedAt: 600 })
+  // A turn archived by its end alone, with nothing at work, leaves no task behind.
+  expect(startTurn(finishBackground(state, 'b1', 'completed', 200), 'second', 500).background).toEqual({})
+
+  // Cutting the turn off stops them at once.
+  const forced = forceArchive(tasked(startTurn(initialState(), 'go', 0), 'b1', 'running', 10), 700)
+
+  expect(forced.turns[0]?.background).toEqual([{ id: 'b1', name: 'Running', status: 'stopped', startedAt: 10, finishedAt: 700 }])
+  expect(forced.turns[0]).toMatchObject({ status: 'stopped', finishedAt: 700 })
+
+  // A turn that had none says nothing of them: the record is as it always was.
+  const plain = settleTurn(finishTurn(startTurn(initialState(), 'Build my landing page', 1000), 'answer', 4000), 9000)
+
+  expect(plain.turns).toEqual([
+    {
+      id: '1000',
+      title: 'Build my landing page',
+      status: 'done',
+      startedAt: 1000,
+      finishedAt: 4000,
+      tokens: 0,
+      leader: { tasksDone: 0, tasksTotal: 0, tokens: 0, finishedAt: 4000 },
+      agents: []
+    }
+  ])
+  expect(Object.keys(plain.turns[0]!)).not.toContain('background')
+
+  // The same for a state saved before the radar followed them.
+  const { background: _, ...old } = finishTurn(startTurn(initialState(), 'go', 0), 'answer', 5)
+
+  expect(Object.keys(settleTurn(old as never, 5).turns[0]!)).not.toContain('background')
+})
+
+test('the timer, the hidden tool rows and the turn phase count the background tasks as they do the subagents, but the active count of the pane is the subagents only', async () => {
+  const working = startTurn(initialState(), 'go', 0)
+  const done = finishTurn(working, 'answer', 10_000)
+  const withTask = tasked(done, 'b1', 'npm run dev', 0)
+  const ended = finishBackground(withTask, 'b1', 'completed', 15_000)
+
+  expect(backgroundActiveCount(undefined)).toBe(0)
+  expect(backgroundActiveCount({})).toBe(0)
+  expect(backgroundActiveCount(withTask.background)).toBe(1)
+  expect(backgroundActiveCount(tasked(withTask, 'b2').background)).toBe(2)
+  // Only the ones at work count.
+  expect(backgroundActiveCount(ended.background)).toBe(0)
+  expect(backgroundActiveCount(finishBackground(tasked(withTask, 'b2'), 'b2', 'failed', 1).background)).toBe(1)
+
+  // The timer lives while one works after the main turn ended, and a finished one is frozen.
+  expect(isLive(done)).toBe(false)
+  expect(isLive(withTask)).toBe(true)
+  expect(isLive(ended)).toBe(false)
+
+  // The tool rows stay hidden while it works, unless the radar is OFF or somebody waits for the person.
+  expect(hidesTools(done)).toBe(false)
+  expect(hidesTools(withTask)).toBe(true)
+  expect(hidesTools({ ...withTask, claudeRadarEnabled: false })).toBe(false)
+  expect(hidesTools(ended)).toBe(false)
+  expect(hidesTools(askUser(tasked(working, 'b1')))).toBe(false)
+
+  // The turn is still working while a task works after the main agent ended, but `active` is the subagents' own count: each title counts its own.
+  expect(paneOf(withTask, 20_000, 0).current).toMatchObject({ tone: 'working', mark: '●', isRunning: true, time: '20s', active: 0 })
+  expect(paneOf(withTask, 20_000, 0).current?.background).toHaveLength(1)
+  expect(paneOf(spawned(withTask, 'a1', 'one', 0), 20_000, 0).current?.active).toBe(1)
+  expect(paneOf(finishSubagent(spawned(withTask, 'a1', 'one', 0), 'a1', 'answer', 1), 20_000, 0).current?.active).toBe(0)
+  expect(paneOf(tasked(spawned(withTask, 'a1', 'one', 0), 'b2'), 20_000, 0).current?.active).toBe(1)
+  // Once it ended the time stops with the last one to end, and nothing runs.
+  expect(paneOf(ended, 999_000, 0).current).toMatchObject({ tone: 'done', mark: '✓', isRunning: false, time: '15s', active: 0 })
+  // A task alone, with the main agent at work, is not a subagent either.
+  expect(paneOf(tasked(working, 'b1'), 5000, 0).current?.active).toBe(0)
+})
+
+test('a background task is a row of the pane: its mark, status and time, no model, tasks or tokens; the ones that ended are frozen', async () => {
+  const state = finishBackground(tasked(tasked(startTurn(initialState(), 'go', 0), 'b1', 'Dev server', 1000), 'b2', 'Tests', 500), 'b2', 'completed', 31_000)
+  const rows = tasksOf(state, 81_000)
+
+  // In start order, each in its state; the one at work has its bar and runs with the clock.
+  expect(rows.map(row => [row.id, row.mark, row.status, row.label, row.name, row.time, row.bar])).toEqual([
+    ['b2', '✓', 'done', 'Done', 'Tests', '30s', null],
+    ['b1', '●', 'working', 'Working', 'Dev server', '1m 20s', bar(null, 0)]
+  ])
+  expect(rows[0]).toMatchObject({ detail: null, tasks: null, tokens: null })
+  expect(tasksOf(finishBackground(state, 'b1', 'failed', 5000), 81_000).map(row => [row.mark, row.label])).toEqual([
+    ['✓', 'Done'],
+    ['✗', 'Failed']
+  ])
+  expect(tasksOf(finishBackground(state, 'b1', 'killed', 5000), 81_000).map(row => [row.mark, row.label])).toEqual([
+    ['✓', 'Done'],
+    ['■', 'Stopped']
+  ])
+  // A turn with none has none.
+  expect(tasksOf(startTurn(initialState(), 'go', 0))).toEqual([])
+})
+
+test('a task with no valid text is named in the language when drawn, in the run and in the history', async () => {
+  const state = tasked(startTurn(initialState(), 'go', 0), 'b1', './scripts/build.sh', 0)
+
+  expect(state.background?.['b1']?.name).toBe('')
+  expect(tasksOf(state, 99, en).map(row => row.name)).toEqual(['Background command'])
+  expect(tasksOf(state, 99, es).map(row => row.name)).toEqual(['Comando en segundo plano'])
+
+  const settled = settleTurn(finishTurn(finishBackground(state, 'b1', 'completed', 50), 'answer', 60), 60)
+
+  expect(paneOf(settled, 99, 0, en).turns[0]?.background.map(row => row.name)).toEqual(['Background command'])
+  expect(paneOf(settled, 99, 0, es).turns[0]?.background.map(row => [row.name, row.label])).toEqual([['Comando en segundo plano', 'Hecho']])
+  // A task with a name keeps it, whatever the language.
+  expect(tasksOf(tasked(startTurn(initialState(), 'go', 0), 'b1', 'npm run dev'), 99, es).map(row => row.name)).toEqual(['Npm run dev'])
+})
+
+/**
+ * The bottom for background tasks: the radar's, a `tool.call` that answers each call with the answer the test gives for its command (a plain one
+ * when it gives none) and a `prompt.submit` that lets the prompt enter, keeping what reached it.
+ */
+const jobs = (on: any, answers: Record<string, unknown> = {}) => {
+  const clock = radar(on)
+  const prompts: { text: string; origin: unknown }[] = []
+
+  on('tool.call', (_: unknown, e: { command?: string }) => answers[e.command ?? ''] ?? answered({ stdout: '' }))
+  on('prompt.submit', (_: unknown, e: { text: string; origin: unknown }) => {
+    prompts.push(e)
+
+    return { text: e.text }
+  })
+
+  return { ...clock, prompts }
+}
+
+/** What the engine answers to a Bash call left in the background, under the id it gave. */
+const left = (id: unknown, extra: object = {}) => answered({ stdout: '', interrupted: false, backgroundTaskId: id, ...extra })
+
+/** A Bash call of the main agent (or of the agent `extra.agentId` names). */
+const bash = ($: any, command: string, description?: string, extra: object = {}) => $.tool.call({ tool: 'Bash', command, description, ...extra } as never)
+
+/** The notification the engine sends when a background task ends: a prompt of its own, with the task's id and how it ended. */
+const notice = ($: any, id: string, status = 'completed', origin: object = { kind: 'task-notification' }) =>
+  $.prompt.submit({
+    text: `<task-notification>\n<task-id>${id}</task-id>\n<tool-use-id>toolu_1</tool-use-id>\n<status>${status}</status>\n<summary>Background command "npm run dev" ${status}</summary>\n</task-notification>`,
+    wait: false,
+    origin
+  } as never)
+
+test('a Bash call left in the background shows in the pane under its own section, and the call goes through as it came', async ($, on) => {
+  const answer = left('b1')
+  const clock = jobs(on, { 'npm run dev': answer })
+
+  await begin($)
+
+  const result = await bash($, 'npm run dev', 'Starting the dev server')
+
+  expect(result).toEqual(answer)
+  await clock.advance(80 * MS)
+
+  const ui = await mount($)
+
+  // The main agent, then, a blank row apart, the block of the background tasks with the ones at work counted; the task is two columns in.
+  expect(await paneLines(ui)).toEqual([
+    '● Current run · 1m 20s',
+    '______________________________',
+    '',
+    'Build my landing page',
+    '',
+    '● Main agent',
+    '  Working · 1m 20s  ███░░░░░░░',
+    '  ▶ Working on your request',
+    '',
+    'Background tasks · 1 active',
+    '  ● Starting the dev server',
+    '    Working · 1m 20s  ███░░░░░░░',
+    '',
+    'History',
+    '______________________________',
+    '',
+    'No finished turns yet'
+  ])
+  expect(await ui.find({ type: 'Text', text: /^Background tasks$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^ · 1 active$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^Subagents$/ })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('the task is named by the description of the call alone, never by its command, and the main checklist is not touched', async ($, on) => {
+  jobs(on, { 'npm run dev': left('b1'), 'npm test': left('b2'), 'sleep 600': left('b3') })
+
+  const box = track(on)
+
+  await begin($)
+  await bash($, 'npm run dev', 'Starting the dev server')
+  await bash($, 'npm test', '')
+  await bash($, 'sleep 600')
+
+  expect(Object.values(box.state.background ?? {}).map(task => [task.id, task.name, task.status])).toEqual([
+    ['b1', 'Starting the dev server', 'working'],
+    ['b2', '', 'working'],
+    ['b3', '', 'working']
+  ])
+  expect(box.state.checklist.tasks).toEqual([])
+  expect(box.state.checklist.phase).toBe('working')
+  expect(box.state.subagents).toEqual({})
+})
+
+test("a Bash call that stays in the foreground, fails, is refused or is not the main agent's adds no background task", async ($, on) => {
+  jobs(on, {
+    'npm run build': answered({ stdout: 'built', interrupted: false }),
+    'echo none': left(''),
+    'echo number': left(7),
+    'echo failed': { ...(left('b1') as object), isError: true },
+    'echo denied': { deny: 'no' },
+    'echo sub': left('b3'),
+    '': left('b4')
+  })
+
+  const box = track(on)
+
+  await begin($)
+  await bash($, 'npm run build')
+  await bash($, 'echo none')
+  await bash($, 'echo number')
+  await bash($, 'echo failed')
+  await bash($, 'echo denied')
+  // A subagent's command is its own: the radar does not follow it.
+  await bash($, 'echo sub', undefined, { agentId: 'a1' })
+  // Only Bash leaves a command running in the background.
+  await $.tool.call({ tool: 'Read', file_path: 'x' } as never)
+
+  expect(box.state.background).toEqual({})
+
+  const ui = await mount($)
+
+  expect(await ui.find({ type: 'Text', text: /Background tasks/ })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('a notification of the task closes it, archives the turn once the main agent ended, and the task is in the history row', async ($, on) => {
+  const clock = jobs(on, { 'npm run dev': left('b1') })
+
+  await begin($)
+  await bash($, 'npm run dev', 'Starting the dev server')
+  await clock.advance(30 * MS)
+  await finish($)
+
+  const ui = await mount($)
+
+  // The main agent is over; the task still works and keeps the turn open: the run is there, working.
+  expect(await ui.find({ type: 'Text', text: /^Current run$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^ · 1 active$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /No finished turns yet/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /ready for more/ })).toBeUndefined()
+  expect(await ui.findAll({ type: 'Text', text: /[█░]/ })).toHaveLength(1)
+
+  await clock.advance(40 * MS)
+  await notice($, 'b1')
+  expect(await ui.find({ type: 'Text', text: /^All done, ready for more instructions$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /No finished turns yet/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /Background tasks/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /[█░]/ })).toBeUndefined()
+  // The turn lasts until the task ended; the main agent keeps its own time.
+  expect((await paneLines(ui)).slice(-6)).toEqual([
+    '✓ Build my landing page',
+    '  Done · 1m 10s',
+    '    ✓ Main agent',
+    '      Done · 30s',
+    '    ✓ Starting the dev server',
+    '      Done · 1m 10s'
+  ])
+  await ui.unmount()
+})
+
+test('the notification closes the task while the main agent still works, and the turn goes on until it ends', async ($, on) => {
+  jobs(on, { 'npm run dev': left('b1') })
+
+  const box = track(on)
+
+  await begin($)
+  await bash($, 'npm run dev', 'Dev server')
+  await notice($, 'b1')
+
+  expect(box.state.background?.['b1']).toMatchObject({ status: 'done' })
+  expect(box.state.turns).toEqual([])
+
+  const ui = await mount($)
+
+  expect(blockOf(await paneLines(ui), /^Background tasks/, 3)).toEqual(['Background tasks · 0 active', '  ✓ Dev server', '    Done · 0s'])
+  await ui.unmount()
+  await finish($)
+  expect(box.state.turns).toHaveLength(1)
+  expect(box.state.turns[0]?.background?.map(task => [task.id, task.status])).toEqual([['b1', 'done']])
+})
+
+test('the status of the notification gives the end: completed is Done, failed is Failed, any other word is Stopped', async ($, on) => {
+  jobs(on, { one: left('b1'), two: left('b2'), three: left('b3') })
+  await begin($)
+  await bash($, 'one', 'First')
+  await bash($, 'two', 'Second')
+  await bash($, 'three', 'Third')
+  await notice($, 'b1', 'completed')
+  await notice($, 'b2', 'failed')
+  await notice($, 'b3', 'killed')
+
+  const ui = await mount($)
+
+  expect(blockOf(await paneLines(ui), /^Background tasks/, 10)).toEqual([
+    'Background tasks · 0 active',
+    '  ✓ First',
+    '    Done · 0s',
+    '',
+    '  ✗ Second',
+    '    Failed · 0s',
+    '',
+    '  ■ Third',
+    '    Stopped · 0s',
+    ''
+  ])
+  await ui.unmount()
+})
+
+test('a task that ends with the final response is Stopped when the main turn ends; the others go on until their notification', async ($, on) => {
+  const clock = jobs(on, {
+    bound: left('b1', { backgroundEndsWithFinalResponse: true }),
+    free: left('b2')
+  })
+
+  await begin($)
+  await bash($, 'bound', 'Bound one')
+  await bash($, 'free', 'Free one')
+  await clock.advance(20 * MS)
+
+  const ui = await mount($)
+
+  expect(blockOf(await paneLines(ui), /^Background tasks/, 1)).toEqual(['Background tasks · 2 active'])
+
+  await finish($)
+  // The one that dies with the turn is over, with no notification to come; the other keeps the turn open.
+  expect(blockOf(await paneLines(ui), /^Background tasks/, 7)).toEqual([
+    'Background tasks · 1 active',
+    '  ■ Bound one',
+    '    Stopped · 20s',
+    '',
+    '  ● Free one',
+    '    Working · 20s  ███░░░░░░░',
+    ''
+  ])
+  expect(await ui.find({ type: 'Text', text: /No finished turns yet/ })).toBeDefined()
+
+  await notice($, 'b2')
+  expect(await ui.find({ type: 'Text', text: /^All done, ready for more instructions$/ })).toBeDefined()
+  expect((await paneLines(ui)).slice(-6)).toEqual([
+    '    ✓ Main agent',
+    '      Done · 20s',
+    '    ■ Bound one',
+    '      Stopped · 20s',
+    '    ✓ Free one',
+    '      Done · 20s'
+  ])
+  await ui.unmount()
+})
+
+test('a notification with no task id or status, of another origin, or of a task not followed changes nothing', async ($, on) => {
+  jobs(on, { 'npm run dev': left('b1') })
+
+  const box = track(on)
+
+  await begin($)
+  await bash($, 'npm run dev')
+  await finish($)
+
+  const before = box.state
+
+  expect(before.background?.['b1']?.status).toBe('working')
+
+  // No tags at all, one tag only, an empty tag.
+  await $.prompt.submit({ text: 'Background command finished', wait: false, origin: { kind: 'task-notification' } } as never)
+  await $.prompt.submit({ text: '<task-id>b1</task-id>', wait: false, origin: { kind: 'task-notification' } } as never)
+  await $.prompt.submit({ text: '<status>completed</status>', wait: false, origin: { kind: 'task-notification' } } as never)
+  await $.prompt.submit({ text: '<task-id></task-id><status>completed</status>', wait: false, origin: { kind: 'task-notification' } } as never)
+  // The right text, from another origin: the person's own words, a plugin, a scheduled trigger.
+  await notice($, 'b1', 'completed', { kind: 'composer' })
+  await notice($, 'b1', 'completed', { kind: 'plugin', name: 'other' })
+  await notice($, 'b1', 'completed', { kind: 'scheduled-trigger' })
+  // A task the radar never followed.
+  await notice($, 'zzz')
+  await notice($, 'constructor')
+
+  expect(box.state).toEqual(before)
+  expect(box.state.background?.['b1']?.status).toBe('working')
+  expect(box.state.turns).toEqual([])
+
+  const ui = await mount($)
+
+  expect(await ui.find({ type: 'Text', text: /^ · 1 active$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /No finished turns yet/ })).toBeDefined()
+  await ui.unmount()
+
+  // The right one, at last, closes it.
+  await notice($, 'b1')
+  expect(box.state.turns).toHaveLength(1)
+  // Told again, it finds nothing to close.
+  await notice($, 'b1', 'failed')
+  expect(box.state.turns).toHaveLength(1)
+  expect(box.state.turns[0]?.background?.map(task => task.status)).toEqual(['done'])
+})
+
+test('the notification goes on as it came: the same text and origin reach the bottom, and its answer comes back', async ($, on) => {
+  const clock = jobs(on, { 'npm run dev': left('b1') })
+
+  await begin($)
+  await bash($, 'npm run dev')
+  await clock.advance(MS)
+
+  const text = '<task-notification>\n<task-id>b1</task-id>\n<status>completed</status>\n<summary>done</summary>\n</task-notification>'
+  const answer = await $.prompt.submit({ text, wait: false, origin: { kind: 'task-notification' } } as never)
+
+  expect(answer).toEqual({ text })
+  expect(clock.prompts).toHaveLength(1)
+  expect(clock.prompts[0]).toMatchObject({ text, origin: { kind: 'task-notification' } })
+
+  // One the radar does not read goes on the same way.
+  const other = await $.prompt.submit({ text: 'Build it', wait: false, origin: { kind: 'composer' } } as never)
+
+  expect(other).toEqual({ text: 'Build it' })
+  expect(clock.prompts[1]).toMatchObject({ text: 'Build it', origin: { kind: 'composer' } })
+})
+
+/** A TaskStop call of the main agent. */
+const stopTask = ($: any, extra: object) => $.tool.call({ tool: 'TaskStop', ...extra } as never)
+
+test('TaskStop closes the task as Stopped and archives the turn once the main agent ended; an unknown id changes nothing', async ($, on) => {
+  jobs(on, { 'npm run dev': left('b1'), 'npm test': left('b2') })
+
+  const box = track(on)
+
+  await begin($)
+  await bash($, 'npm run dev', 'Dev server')
+  await bash($, 'npm test', 'Tests')
+  await stopTask($, { task_id: 'b1' })
+  expect(box.state.background?.['b1']).toMatchObject({ status: 'stopped' })
+  expect(box.state.background?.['b2']).toMatchObject({ status: 'working' })
+
+  // An id the radar never followed, or none at all: the same state.
+  const before = box.state
+
+  await stopTask($, { task_id: 'zzz' })
+  await stopTask($, { task_id: 'constructor' })
+  await stopTask($, {})
+  expect(box.state).toEqual(before)
+
+  // The deprecated field names the task as well; the main agent has ended, so the last one to stop archives the turn.
+  await finish($)
+  expect(box.state.turns).toEqual([])
+  await stopTask($, { shell_id: 'b2' })
+  expect(box.state.turns).toHaveLength(1)
+  expect(box.state.turns[0]?.background?.map(task => [task.id, task.status])).toEqual([
+    ['b1', 'stopped'],
+    ['b2', 'stopped']
+  ])
+  expect(box.state.background).toEqual({})
+})
+
+test('a new turn leaves a task at work out of the archived turn and it goes on there until its notification closes it', async ($, on) => {
+  jobs(on, { a: left('b1'), b: left('b2') })
+
+  const box = track(on)
+
+  await begin($)
+  await bash($, 'a', 'Task A')
+  await bash($, 'b', 'Task B')
+  await finish($)
+  await notice($, 'b1')
+  // B still works and keeps the first turn open.
+  expect(box.state.turns).toEqual([])
+
+  await begin($, 'Second request')
+  expect(box.state.turns).toHaveLength(1)
+  expect(box.state.turns[0]?.background?.map(task => [task.id, task.status])).toEqual([['b1', 'done']])
+  expect(box.state.background?.['b2']).toMatchObject({ status: 'working', name: 'Task B' })
+
+  const ui = await mount($)
+
+  expect(blockOf(await paneLines(ui), /^Background tasks/, 2)).toEqual(['Background tasks · 1 active', '  ● Task B'])
+  expect(await ui.findAll({ type: 'Text', text: /^Stopped$/ })).toHaveLength(0)
+  await ui.unmount()
+
+  await finish($)
+  await notice($, 'b2')
+  expect(box.state.turns).toHaveLength(2)
+  expect(box.state.turns[0]?.title).toBe('Second request')
+  expect(box.state.turns[0]?.background?.map(task => [task.id, task.status])).toEqual([['b2', 'done']])
+  expect(box.state.turns[1]?.background?.map(task => task.status)).toEqual(['done'])
+
+  // Cutting a turn off, instead, still archives the task as stopped.
+  await begin($, 'Third request')
+  await bash($, 'b', 'Task C')
+  await finish($, 'aborted')
+  expect(box.state.turns[0]?.background?.map(task => [task.id, task.status])).toEqual([['b2', 'stopped']])
+})
+
+test('a grouped notification closes every task it names in one write, pairing ids and statuses by position; one that does not pair up closes nothing', async ($, on) => {
+  jobs(on, { one: left('b1'), two: left('b2'), three: left('b3') })
+
+  const box = track(on)
+
+  await begin($)
+  await bash($, 'one', 'First')
+  await bash($, 'two', 'Second')
+  await bash($, 'three', 'Third')
+
+  const block = (id: string, status: string) => `<task-notification>\n<task-id>${id}</task-id>\n<status>${status}</status>\n</task-notification>`
+  const group = (...blocks: string[]) => $.prompt.submit({ text: blocks.join('\n'), wait: false, origin: { kind: 'task-notification' } } as never)
+  const before = box.state
+
+  // More ids than statuses, and the other way round.
+  await group(block('b1', 'completed'), '<task-id>b2</task-id>')
+  await group(block('b1', 'completed'), '<status>failed</status>')
+  expect(box.state).toEqual(before)
+
+  await group(block('b1', 'completed'), block('b2', 'failed'))
+  expect(Object.values(box.state.background ?? {}).map(task => [task.id, task.status])).toEqual([
+    ['b1', 'done'],
+    ['b2', 'failed'],
+    ['b3', 'working']
+  ])
+
+  await finish($)
+  await group(block('b3', 'killed'), block('zzz', 'completed'))
+  expect(box.state.turns).toHaveLength(1)
+  expect(box.state.turns[0]?.background?.map(task => [task.id, task.status])).toEqual([
+    ['b1', 'done'],
+    ['b2', 'failed'],
+    ['b3', 'stopped']
+  ])
+})
+
+test('the subagents block and the background block each count their own active ones', async ($, on) => {
+  const ids = ['a1', 'a2']
+
+  jobs(on, { one: left('b1'), two: left('b2'), three: left('b3') })
+  on('agent.spawn', () => ({ model: 'm', agentId: ids.shift() }))
+
+  await begin($)
+  await spawn($, 'frontend-developer', 'Building login components')
+  await spawn($, 'code-reviewer', 'Reviewing the diff')
+  await bash($, 'one', 'First')
+  await bash($, 'two', 'Second')
+  await bash($, 'three', 'Third')
+
+  const ui = await mount($)
+
+  expect(await ui.findAll({ type: 'Text', text: /^ · 2 active$/ })).toHaveLength(1)
+  expect(await ui.findAll({ type: 'Text', text: /^ · 3 active$/ })).toHaveLength(1)
+
+  // A subagent ends: only its own count goes down. A task ends: the same.
+  await finish($, 'answer', 'a1')
+  expect(await ui.find({ type: 'Text', text: /^ · 1 active$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^ · 3 active$/ })).toBeDefined()
+  await notice($, 'b2')
+  await notice($, 'b3', 'failed')
+
+  const lines = await paneLines(ui)
+
+  expect(blockOf(lines, /^Subagents/, 1)).toEqual(['Subagents · 1 active'])
+  expect(blockOf(lines, /^Background tasks/, 1)).toEqual(['Background tasks · 1 active'])
+  // The subagents come first, the background tasks after, a blank row apart.
+  expect(lines.findIndex(line => /^Subagents/.test(line))).toBeLessThan(lines.findIndex(line => /^Background tasks/.test(line)))
+  expect(lines[lines.findIndex(line => /^Background tasks/.test(line)) - 1]).toBe('')
+  await ui.unmount()
+})
+
+test('with settings.language in Spanish the background tasks section and its count speak Spanish, the name of the task untouched', async ($, on) => {
+  jobs(on, { 'npm run dev': left('b1'), './scripts/build.sh': left('b2') })
+  on('settings.read', spanish)
+
+  await $.session.start({ cwd: '/work', surface: 'terminal', isInteractive: true })
+  await begin($)
+  await bash($, 'npm run dev', 'Starting the dev server')
+  await bash($, './scripts/build.sh')
+
+  const pane = await paneView($)
+
+  expect(await pane.find({ type: 'Text', text: /^Tareas en segundo plano$/ })).toBeDefined()
+  expect(await pane.find({ type: 'Text', text: /^ · 2 activos$/ })).toBeDefined()
+  expect(await pane.find({ type: 'Text', text: /^Starting the dev server$/ })).toBeDefined()
+  expect(await pane.find({ type: 'Text', text: /^Comando en segundo plano$/ })).toBeDefined()
+  expect(await pane.find({ type: 'Text', text: /Background (tasks|command)|active/ })).toBeUndefined()
+  await pane.unmount()
+
+  await finish($)
+  await notice($, 'b1')
+  await notice($, 'b2', 'failed')
+
+  const archived = await paneView($)
+
+  expect(await archived.find({ type: 'Text', text: /^Todo listo, esperando instrucciones$/ })).toBeDefined()
+  expect(await archived.find({ type: 'Text', text: /^Tareas en segundo plano$/ })).toBeUndefined()
+  // The turn, the main agent and the first task are done; the second failed.
+  expect(await archived.findAll({ type: 'Text', text: /^Hecho$/ })).toHaveLength(3)
+  expect(await archived.findAll({ type: 'Text', text: /^Falló$/ })).toHaveLength(1)
+  expect(await archived.find({ type: 'Text', text: /^Comando en segundo plano$/ })).toBeDefined()
+  await archived.unmount()
 })

@@ -11,6 +11,8 @@ export type AgentPhase = 'working' | 'needsYou' | 'stuck' | 'stopped' | 'done'
 
 export type SubagentStatus = 'working' | 'needsYou' | 'done' | 'failed' | 'stopped'
 
+export type BackgroundStatus = 'working' | 'done' | 'failed' | 'stopped'
+
 /** The model a request names and how hard it asks it to think; `effort` is null for a model that takes none. */
 export type ModelInfo = {
   model: string
@@ -34,6 +36,19 @@ export type SubagentState = {
   modelInfo?: ModelInfo
   /** The tokens its model requests used, as the API reported them (`turn.step`'s usage, see `tokensOf`); absent until one is seen. */
   tokens?: number
+  startedAt: number
+  finishedAt: number | null
+}
+
+/** A long command the main agent left running in the background, followed until its notification (or the end of the turn) says how it ended. */
+export type BackgroundTaskState = {
+  /** The `backgroundTaskId` the engine gives the command; the same id comes back in its notification. */
+  id: string
+  /** The call's description, or its command when it has none, tidied; empty when nothing valid was left (the drawing says so in the language). */
+  name: string
+  status: BackgroundStatus
+  /** Set when the task dies with the final response, so no notification will follow. */
+  endsWithTurn?: true
   startedAt: number
   finishedAt: number | null
 }
@@ -65,6 +80,8 @@ export type TurnRecord = {
   leader: { modelInfo?: ModelInfo; tasksDone: number; tasksTotal: number; tokens: number; finishedAt: number }
   /** The subagents of the turn, in start order, each in its final state. */
   agents: SubagentState[]
+  /** The background tasks of the turn, in start order, each in its final state; absent in a turn archived before the radar followed them. */
+  background?: BackgroundTaskState[]
 }
 
 export type ClaudeRadarState = {
@@ -85,6 +102,8 @@ export type ClaudeRadarState = {
   leaderTokens?: number
   /** The subagents of the current turn, working or finished, until the turn is archived. */
   subagents: Record<string, SubagentState>
+  /** The background tasks of the current turn, working or finished, until the turn is archived; absent in a state saved before the radar followed them. */
+  background?: Record<string, BackgroundTaskState>
   /** The turns that ended, the most recent first, at most 10; the detail pane lists them. */
   turns: TurnRecord[]
   tick: number

@@ -1,4 +1,4 @@
-import type { ActivityCode, AgentPhase, ChecklistTask, ClaudeRadarState, ModelInfo, ReasonCode, SubagentState, SubagentStatus, TurnRecord } from '../types'
+import type { ActivityCode, AgentPhase, BackgroundStatus, BackgroundTaskState, ChecklistTask, ClaudeRadarState, ModelInfo, ReasonCode, SubagentState, SubagentStatus, TurnRecord } from '../types'
 
 import type { Texts } from './i18n'
 
@@ -15,6 +15,7 @@ export const initialState = (): ClaudeRadarState => ({
     finishedAt: null
   },
   subagents: {},
+  background: {},
   turns: [],
   tick: 0
 })
@@ -122,9 +123,15 @@ const withoutLeaderTokens = (state: ClaudeRadarState): ClaudeRadarState => {
   return rest
 }
 
-/** A new turn: working from `now`, nothing kept of the last one (one still open is archived first, see `forceArchive`), its title made from the prompt (80 characters at most). */
-export const startTurn = (state: ClaudeRadarState, text: string, now: number): ClaudeRadarState =>
-  patchChecklist(withoutLeaderTokens(forceArchive(state, now)), {
+/** A new turn: working from `now`, nothing kept of the last one but the background tasks still at work (one still open is archived first, see `forceArchive`), its title made from the prompt (80 characters at most). */
+export const startTurn = (state: ClaudeRadarState, text: string, now: number): ClaudeRadarState => {
+  // A background task at work outlives the turn that started it: it is kept out of the archived record and goes on in the new turn.
+  const tasks = Object.entries(state.background ?? {})
+  const alive = Object.fromEntries(tasks.filter(([, task]) => isBackgroundActive(task.status)))
+  const keeps = Object.keys(alive).length > 0
+  const archived = forceArchive(keeps ? { ...state, background: Object.fromEntries(tasks.filter(([, task]) => !isBackgroundActive(task.status))) } : state, now)
+
+  return patchChecklist(withoutLeaderTokens(keeps ? { ...archived, background: alive } : archived), {
     title: clean(text, TITLE_MAX) || null,
     phase: 'working',
     tasks: [],
@@ -133,13 +140,14 @@ export const startTurn = (state: ClaudeRadarState, text: string, now: number): C
     startedAt: now,
     finishedAt: null
   })
+}
 
 /** The end of a turn: answered is done, interrupted is stopped, an error or a refusal is stuck. Tasks still active stay as they were. */
 export const finishTurn = (state: ClaudeRadarState, reason: TurnReason, now: number): ClaudeRadarState => {
   const phase: AgentPhase = reason === 'answer' ? 'done' : reason === 'aborted' ? 'stopped' : 'stuck'
   const stuckReason: ReasonCode | null = reason === 'error' ? 'error' : reason === 'refusal' ? 'refusal' : null
 
-  return patchChecklist(state, { phase, needsYouReason: null, stuckReason, finishedAt: now })
+  return endBoundBackground(patchChecklist(state, { phase, needsYouReason: null, stuckReason, finishedAt: now }), now)
 }
 
 /** The status a task takes from `TodoWrite`'s or `TaskUpdate`'s, or `null` for one that is gone. */
@@ -220,14 +228,14 @@ export const resumeWork = (state: ClaudeRadarState): ClaudeRadarState =>
 /** One step of the timer: the animation moves on. */
 export const advance = (state: ClaudeRadarState): ClaudeRadarState => ({ ...state, tick: state.tick + 1 })
 
-/** Whether the timer has something to move while the pane is open: a turn at work or waiting, or any subagent at work (a finished one is frozen). */
+/** Whether the timer has something to move while the pane is open: a turn at work or waiting, or any subagent or background task at work (a finished one is frozen). */
 export const isLive = (state: ClaudeRadarState) => {
   const { phase } = state.checklist
 
-  return phase === 'working' || phase === 'needsYou' || activeCount(state.subagents) > 0
+  return phase === 'working' || phase === 'needsYou' || activeCount(state.subagents) > 0 || backgroundActiveCount(state.background) > 0
 }
 
-/** Whether the tool rows (calls, results, groups, progress) are hidden now: the radar is ON and work goes on (the main turn working, or any subagent at work), and nobody waits for the person: a call that asks permission stays in view. */
+/** Whether the tool rows (calls, results, groups, progress) are hidden now: the radar is ON and work goes on (the main turn working, or any subagent or background task at work), and nobody waits for the person: a call that asks permission stays in view. */
 export const hidesTools = (state: ClaudeRadarState) => {
   if (!state.claudeRadarEnabled) return false
 
@@ -235,7 +243,7 @@ export const hidesTools = (state: ClaudeRadarState) => {
 
   if (phase === 'needsYou' || Object.values(state.subagents).some(agent => agent.status === 'needsYou')) return false
 
-  return phase === 'working' || activeCount(state.subagents) > 0
+  return phase === 'working' || activeCount(state.subagents) > 0 || backgroundActiveCount(state.background) > 0
 }
 
 /** A line of the checklist, as text: the mark and the name, nothing else (no bar, no label of its status). */
@@ -435,14 +443,82 @@ export const finishSubagent = (state: ClaudeRadarState, id: string, reason: Turn
 /** How many subagents are at work (running or waiting for the person). */
 export const activeCount = (subagents: Subagents) => Object.values(subagents).filter(agent => isActive(agent.status)).length
 
-/** The turn, closed and put at the front of the archive (at most `TURNS_MAX`) with its tokens; the current turn is left empty, tokens included. Subagents still at work are stopped at `now`. The model of the main agent, the ON/OFF choice and the tick stay. */
+type Background = NonNullable<ClaudeRadarState['background']>
+
+/** What the main agent's call tells about the background task it started. */
+export type BackgroundStart = {
+  id: string
+  name: string
+  endsWithTurn?: boolean
+}
+
+/** Whether the radar follows this background task; ids are keys, so inherited names do not count. */
+const isKnownBackground = (background: Background, id: string) => Object.prototype.hasOwnProperty.call(background, id)
+
+/** Whether a background task is still at work. */
+const isBackgroundActive = (status: BackgroundStatus) => status === 'working'
+
+/** A background task that started: working from `now`, under the id the engine gave it. A second start with a known id changes nothing. */
+export const startBackground = (state: ClaudeRadarState, start: BackgroundStart, now: number): ClaudeRadarState => {
+  const background = state.background ?? {}
+
+  if (isKnownBackground(background, start.id)) return state
+
+  const task: BackgroundTaskState = {
+    id: start.id,
+    name: clean(start.name, TITLE_MAX),
+    status: 'working',
+    startedAt: now,
+    finishedAt: null
+  }
+
+  if (start.endsWithTurn) task.endsWithTurn = true
+
+  return { ...state, background: { ...background, [start.id]: task } }
+}
+
+/** The end of a background task, by the word its notification gives: `completed` is done, `failed` is failed, any other word is stopped. One not followed, or already finished, is left as it is. */
+export const finishBackground = (state: ClaudeRadarState, id: string, word: string, now: number): ClaudeRadarState => {
+  const background = state.background ?? {}
+
+  if (!isKnownBackground(background, id) || !isBackgroundActive(background[id]!.status)) return state
+
+  const status: BackgroundStatus = word === 'completed' ? 'done' : word === 'failed' ? 'failed' : 'stopped'
+
+  return { ...state, background: { ...background, [id]: { ...background[id]!, status, finishedAt: now } } }
+}
+
+/** How many background tasks are at work. */
+export const backgroundActiveCount = (background: Background | undefined) =>
+  Object.values(background ?? {}).filter(task => isBackgroundActive(task.status)).length
+
+/** The end of the turn stops the background tasks that die with it (no notification will follow); the others go on. */
+export const endBoundBackground = (state: ClaudeRadarState, now: number): ClaudeRadarState => {
+  const background = state.background ?? {}
+
+  if (!Object.values(background).some(task => task.endsWithTurn && isBackgroundActive(task.status))) return state
+
+  const ended = Object.fromEntries(
+    Object.entries(background).map(([id, task]): [string, BackgroundTaskState] => [
+      id,
+      task.endsWithTurn && isBackgroundActive(task.status) ? { ...task, status: 'stopped', finishedAt: now } : task
+    ])
+  )
+
+  return { ...state, background: ended }
+}
+
+/** The turn, closed and put at the front of the archive (at most `TURNS_MAX`) with its tokens; the current turn is left empty, tokens included. Subagents and background tasks still at work are stopped at `now`. The model of the main agent, the ON/OFF choice and the tick stay. */
 const archiveTurn = (state: ClaudeRadarState, now: number): ClaudeRadarState => {
   const { checklist } = state
   const agents = Object.values(state.subagents)
     .sort((a, b) => a.startedAt - b.startedAt)
     .map((agent): SubagentState => (isActive(agent.status) ? { ...agent, status: 'stopped', finishedAt: now } : { ...agent }))
-  // The turn lasts until the main agent and every subagent have ended.
-  const finishedAt = Math.max(checklist.finishedAt ?? now, ...agents.map(agent => agent.finishedAt ?? 0))
+  const background = Object.values(state.background ?? {})
+    .sort((a, b) => a.startedAt - b.startedAt)
+    .map((task): BackgroundTaskState => (isBackgroundActive(task.status) ? { ...task, status: 'stopped', finishedAt: now } : { ...task }))
+  // The turn lasts until the main agent, every subagent and every background task have ended.
+  const finishedAt = Math.max(checklist.finishedAt ?? now, ...agents.map(agent => agent.finishedAt ?? 0), ...background.map(task => task.finishedAt ?? 0))
   // A turn cut off while it still worked counts as stopped.
   const status: TurnRecord['status'] = checklist.phase === 'done' ? 'done' : checklist.phase === 'stuck' ? 'failed' : 'stopped'
   let id = String(checklist.startedAt)
@@ -463,21 +539,22 @@ const archiveTurn = (state: ClaudeRadarState, now: number): ClaudeRadarState => 
       tokens: state.leaderTokens ?? 0,
       finishedAt: checklist.finishedAt ?? now
     },
-    agents
+    agents,
+    ...(background.length === 0 ? {} : { background })
   }
 
-  return { ...withoutLeaderTokens(state), checklist: initialState().checklist, subagents: {}, turns: [record, ...state.turns].slice(0, TURNS_MAX) }
+  return { ...withoutLeaderTokens(state), checklist: initialState().checklist, subagents: {}, background: {}, turns: [record, ...state.turns].slice(0, TURNS_MAX) }
 }
 
 /** Archives the turn at once, whatever is still going on; the same state when there is no turn. */
 export const forceArchive = (state: ClaudeRadarState, now: number): ClaudeRadarState =>
   state.checklist.startedAt === null ? state : archiveTurn(state, now)
 
-/** Archives the turn once it is over: the main agent has ended (done, stuck or stopped) and no subagent is at work. Otherwise the same state: a subagent in the background keeps the turn open. */
+/** Archives the turn once it is over: the main agent has ended (done, stuck or stopped) and no subagent or background task is at work. Otherwise the same state: a subagent in the background keeps the turn open. */
 export const settleTurn = (state: ClaudeRadarState, now: number): ClaudeRadarState => {
   const { phase, startedAt } = state.checklist
 
-  if (startedAt === null || phase === 'working' || phase === 'needsYou' || activeCount(state.subagents) > 0) return state
+  if (startedAt === null || phase === 'working' || phase === 'needsYou' || activeCount(state.subagents) > 0 || backgroundActiveCount(state.background) > 0) return state
 
   return archiveTurn(state, now)
 }
@@ -574,7 +651,9 @@ export type PaneCurrent = {
   leader: PaneRow
   tasks: TaskRow[]
   agents: PaneAgent[]
-  /** How many of the subagents are at work (running or waiting for the person). */
+  /** The background tasks of the turn (at work or finished), in start order, one row each. */
+  background: PaneRow[]
+  /** How many subagents are at work (running or waiting for the person); the background tasks count apart. */
   active: number
 }
 
@@ -590,6 +669,8 @@ export type PaneTurn = {
   tokens: string | null
   leader: PaneRow
   agents: PaneAgent[]
+  /** The background tasks of the turn, in start order, each in its final state. */
+  background: PaneRow[]
 }
 
 /** A count of tokens as the pane writes it, or null when there are none (nothing is drawn then). */
@@ -631,6 +712,23 @@ const paneAgentOf = (agent: SubagentState, now: number, depth: number, tick: num
 const paneAgentsOf = (subagents: Subagents, now: number, tick: number, t: Texts) =>
   orderedSubagents(subagents).map(({ agent, depth }) => paneAgentOf(agent, now, depth, tick, t))
 
+/** The pane's row of a background task, as a subagent's but with no model, tasks or tokens. */
+const paneBackgroundOf = (task: BackgroundTaskState, now: number, tick: number, t: Texts): PaneRow => ({
+  id: task.id,
+  ...looksOf(task.status, tick),
+  status: task.status,
+  name: task.name || t.backgroundFallback,
+  time: elapsed((task.finishedAt ?? now) - task.startedAt),
+  label: t.agent[task.status],
+  detail: null,
+  tasks: null,
+  tokens: null
+})
+
+/** The background tasks as pane rows, in start order. */
+const paneBackgroundsOf = (tasks: BackgroundTaskState[], now: number, tick: number, t: Texts) =>
+  [...tasks].sort((a, b) => a.startedAt - b.startedAt).map(task => paneBackgroundOf(task, now, tick, t))
+
 /** The main agent's row: `status` is where it stands, `time` how long it has gone. */
 const paneLeaderOf = (
   status: SubagentStatus,
@@ -655,7 +753,7 @@ const paneLeaderOf = (
 /** Where the main agent stands, as a subagent's status is told. */
 const LEADER_STATUS: Record<AgentPhase, SubagentStatus> = { working: 'working', needsYou: 'needsYou', stuck: 'failed', stopped: 'stopped', done: 'done' }
 
-/** The turn's phase: the main agent's, but a turn whose main agent has ended is still working (or waiting for the person) while a subagent is. */
+/** The turn's phase: the main agent's, but a turn whose main agent has ended is still working (or waiting for the person) while a subagent is, and working while a background task is. */
 const turnPhaseOf = (state: ClaudeRadarState): AgentPhase => {
   const { phase } = state.checklist
 
@@ -665,7 +763,7 @@ const turnPhaseOf = (state: ClaudeRadarState): AgentPhase => {
 
   if (agents.some(agent => agent.status === 'needsYou')) return 'needsYou'
 
-  return agents.some(agent => isActive(agent.status)) ? 'working' : phase
+  return agents.some(agent => isActive(agent.status)) || backgroundActiveCount(state.background) > 0 ? 'working' : phase
 }
 
 /** The reason the turn waits or is stuck, in words; null in any other phase. */
@@ -684,8 +782,9 @@ const currentOf = (state: ClaudeRadarState, now: number, tick: number, t: Texts)
   const phase = turnPhaseOf(state)
   const isRunning = phase === 'working' || phase === 'needsYou'
   const agents = Object.values(state.subagents)
+  const background = Object.values(state.background ?? {})
   // At work the time runs; once all ended it stops with the last one to end.
-  const end = isRunning ? now : Math.max(checklist.finishedAt ?? now, ...agents.map(agent => agent.finishedAt ?? 0))
+  const end = isRunning ? now : Math.max(checklist.finishedAt ?? now, ...agents.map(agent => agent.finishedAt ?? 0), ...background.map(task => task.finishedAt ?? 0))
   const time = elapsed(end - checklist.startedAt)
 
   return {
@@ -708,6 +807,7 @@ const currentOf = (state: ClaudeRadarState, now: number, tick: number, t: Texts)
     ),
     tasks: rowsOf(checklist, t),
     agents: paneAgentsOf(state.subagents, now, tick, t),
+    background: paneBackgroundsOf(background, now, tick, t),
     active: activeCount(state.subagents)
   }
 }
@@ -733,7 +833,8 @@ const turnOf = (turn: TurnRecord, now: number, tick: number, t: Texts): PaneTurn
       tick,
       t
     ),
-    agents: paneAgentsOf(Object.fromEntries(turn.agents.map(agent => [agent.id, agent])), now, tick, t)
+    agents: paneAgentsOf(Object.fromEntries(turn.agents.map(agent => [agent.id, agent])), now, tick, t),
+    background: paneBackgroundsOf(turn.background ?? [], now, tick, t)
   }
 }
 

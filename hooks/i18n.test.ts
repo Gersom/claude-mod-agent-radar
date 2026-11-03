@@ -95,6 +95,18 @@ test('the heading words: tokens, subagents, how many are active and how many run
   expect([0, 1, 6].map(es.runs)).toEqual(['0 ejecuciones', '1 ejecución', '6 ejecuciones'])
 })
 
+test('the background tasks title and the name of a task with no valid text exist in each language, and are not empty', async () => {
+  for (const texts of [es, en]) {
+    expect(typeof texts.background).toBe('string')
+    expect(texts.background.length).toBeGreaterThan(0)
+    expect(typeof texts.backgroundFallback).toBe('string')
+    expect(texts.backgroundFallback.length).toBeGreaterThan(0)
+  }
+  // Each language says them in its own words.
+  expect(es.background).not.toBe(en.background)
+  expect(es.backgroundFallback).not.toBe(en.backgroundFallback)
+})
+
 test('the unavailable pane is put in each language', async () => {
   expect(en.paneUnavailable(null)).toBe('The detail pane is not available here')
   expect(en.paneUnavailable('narrow')).toBe('The detail pane is not available here: narrow')

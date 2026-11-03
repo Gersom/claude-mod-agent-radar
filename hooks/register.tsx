@@ -12,6 +12,7 @@ import {
   askUser,
   buttonLabel,
   didRun,
+  finishBackground,
   finishSubagent,
   finishTurn,
   forceArchive,
@@ -28,6 +29,7 @@ import {
   resumeWork,
   settleTurn,
   spawnSubagent,
+  startBackground,
   startTurn,
   statusFields,
   stepModel,
@@ -456,6 +458,23 @@ export const register: Register = on => {
     return next(e)
   })
 
+  // A background task's notification reaches the model as a prompt of its own: it carries the task's id and how it ended. Observe only: the prompt goes on as it came.
+  on('prompt.submit', async ($, e, next) => {
+    if (e.origin.kind === 'task-notification') {
+      // Grouped notifications carry several blocks: ids and statuses pair up by position, and a text that does not pair up closes nothing.
+      const ids = [...e.text.matchAll(/<task-id>\s*([^<\s]+)\s*<\/task-id>/g)].map(match => match[1]!)
+      const statuses = [...e.text.matchAll(/<status>\s*([^<\s]+)\s*<\/status>/g)].map(match => match[1]!)
+
+      if (ids.length > 0 && ids.length === statuses.length) {
+        const time = await $.clock.now()
+
+        await change($, state => settleTurn(ids.reduce((current, id, index) => finishBackground(current, id, statuses[index]!, time), state), time))
+      }
+    }
+
+    return next(e)
+  })
+
   on('tool.call', async ($, e, next) => {
     if (e.agentId !== undefined) {
       // A subagent's call: its activity, said in plain words, and the wait for the person (if any) is over.
@@ -481,6 +500,27 @@ export const register: Register = on => {
         await change($, state => addTask(state, id, e.subject))
       } else if (e.tool === 'TaskUpdate') {
         await change($, state => updateTask(state, e.taskId, { status: e.status, subject: e.subject }))
+      } else if (e.tool === 'Bash') {
+        // A command left running in the background: followed until its notification says how it ended.
+        const result = ran.result as { backgroundTaskId?: unknown; backgroundEndsWithFinalResponse?: unknown } | null | undefined
+        const id = result?.backgroundTaskId
+
+        if (typeof id === 'string' && id !== '') {
+          const time = await $.clock.now()
+          const endsWithTurn = result?.backgroundEndsWithFinalResponse === true
+
+          await change($, state => startBackground(state, { id, name: e.description ?? '', endsWithTurn }, time))
+          await start($)
+        }
+      } else if (e.tool === 'TaskStop') {
+        // A task stopped by the model ends here; one not followed changes nothing.
+        const id = e.task_id ?? e.shell_id
+
+        if (id !== undefined) {
+          const time = await $.clock.now()
+
+          await change($, state => settleTurn(finishBackground(state, id, 'killed', time), time))
+        }
       }
     }
 
@@ -744,7 +784,12 @@ export const register: Register = on => {
       return heading(markCell(current.mark, current.tone === 'working' ? GREEN : TONE[current.tone], !current.isRunning || !current.isLit), t.currentRun, total)
     }
 
-    /** The whole run of the turn in progress: the title, the main agent with its checklist and, a blank row apart, the block of the subagents, one blank row between each. */
+    /** How many rows are at work (status `working`). */
+    const workingOf = (rows: PaneRow[]) => rows.filter(row => row.status === 'working').length
+    /** How many subagents of a list are at work (running or waiting for the person). */
+    const agentsAtWork = (rows: PaneRow[]) => rows.filter(row => isAtWork(row.status)).length
+
+    /** The whole run of the turn in progress: the title, the main agent with its checklist and, a blank row apart, the block of the subagents and the one of the background tasks, one blank row between each. */
     const currentBlock = (current: PaneCurrent) => (
       <Box flexDirection="column">
         <Box>
@@ -768,13 +813,30 @@ export const register: Register = on => {
               <Text wrap="truncate-end" bold dimColor>
                 {t.subagents}
               </Text>
-              <Text wrap="truncate-end" color={current.active > 0 ? GREEN : undefined} dimColor={current.active === 0}>
-                {` · ${t.active(current.active)}`}
+              <Text wrap="truncate-end" color={agentsAtWork(current.agents) > 0 ? GREEN : undefined} dimColor={agentsAtWork(current.agents) === 0}>
+                {` · ${t.active(agentsAtWork(current.agents))}`}
               </Text>
             </Box>
             {current.agents.map((agent, index) => (
               <Box key={`agent-${agent.id}`} flexDirection="column" marginTop={index === 0 ? 0 : 1} paddingLeft={2 + agent.depth * 2}>
                 {agentBlock(agent, agent.task, isAtWork(agent.status) ? agent.activity : null)}
+              </Box>
+            ))}
+          </Box>
+        )}
+        {current.background.length === 0 ? null : (
+          <Box key="background" flexDirection="column" marginTop={1}>
+            <Box>
+              <Text wrap="truncate-end" bold dimColor>
+                {t.background}
+              </Text>
+              <Text wrap="truncate-end" color={workingOf(current.background) > 0 ? GREEN : undefined} dimColor={workingOf(current.background) === 0}>
+                {` · ${t.active(workingOf(current.background))}`}
+              </Text>
+            </Box>
+            {current.background.map((task, index) => (
+              <Box key={`background-${task.id}`} flexDirection="column" marginTop={index === 0 ? 0 : 1} paddingLeft={2}>
+                {agentBlock(task, null, null)}
               </Box>
             ))}
           </Box>
@@ -800,6 +862,11 @@ export const register: Register = on => {
             {turn.agents.map(agent => (
               <Box key={`turn-${turn.id}-${agent.id}`} flexDirection="column" paddingLeft={agent.depth * 2}>
                 {agentBlock(agent, agent.task, null, null, true)}
+              </Box>
+            ))}
+            {turn.background.map(task => (
+              <Box key={`turn-${turn.id}-bg-${task.id}`} flexDirection="column">
+                {agentBlock(task, null, null, null, true)}
               </Box>
             ))}
           </Box>

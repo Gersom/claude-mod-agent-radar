@@ -28,7 +28,7 @@ Agent Radar                         [ ◧ Detail ] [ ● ON ] [ ✕ Hide ]
 
 ### El panel de detalle
 
-El panel se organiza por **turnos**. Un turno empieza cuando le pides algo a Claude y dura hasta que el agente principal **y todos sus subagentes** terminan (o hasta que lo cancelas). Arriba va la **ejecución actual**, el turno en curso; debajo, el **historial**, con un grupo por cada turno terminado. Todo está siempre desplegado: no hay plegables ni botones dentro del panel; si hay más de lo que cabe, el motor desplaza el panel.
+El panel se organiza por **turnos**. Un turno empieza cuando le pides algo a Claude y dura hasta que el agente principal, **todos sus subagentes y sus tareas en segundo plano** terminan (o hasta que lo cancelas). Arriba va la **ejecución actual**, el turno en curso; debajo, el **historial**, con un grupo por cada turno terminado. Todo está siempre desplegado: no hay plegables ni botones dentro del panel; si hay más de lo que cabe, el motor desplaza el panel.
 
 Con el radar en `ON` y Claude trabajando (en inglés, el idioma por defecto; ver «Idioma»):
 
@@ -170,6 +170,7 @@ Sin límite de filas (el motor lo desplaza); todo se trunca con `…` al ancho d
   - El **título del turno** (del prompt, sin rutas ni código, de 80 caracteres como máximo y cortado por palabras; el dibujo lo corta con `…` al ancho real). Si el turno espera tu permiso o terminó con un error, la razón va a su lado, atenuada (`· Waiting for your permission`).
   - El **agente principal** (`Main agent`): sus líneas (ver abajo) y, al final de ellas, su checklist completo.
   - El bloque de los **subagentes del turno** (los que trabajan y los que ya terminaron), una fila en blanco más abajo y con su jerarquía (ver «Subagentes»): un encabezado `Subagents · 2 active` (`<título> · <activos>`; el contador en verde si hay alguno, atenuado si no) y, bajo él, cada agente sangrado dos columnas, separado del siguiente por una fila en blanco.
+  - El bloque de las **tareas en segundo plano** (comandos que Bash dejó corriendo), una fila en blanco más abajo y solo si las hay: un encabezado `Background tasks · 1 active` (`Tareas en segundo plano` en español; cuenta solo las suyas, aparte de los subagentes) y, bajo él, una fila por tarea con su estado y su tiempo. Se nombran por la descripción de la llamada, nunca por el comando (que puede llevar secretos); sin descripción, `Background command`. Se cierran con su notificación o con `TaskStop`; una tarea viva sigue en el turno nuevo si empiezas otro, y solo se archiva como `Stopped` al cancelar el turno.
   - Sin turno en curso: `All done, ready for more instructions`.
 - **History** (historial): el título con el número de turnos como subtítulo en gris, pegado al título (`History · 2 runs`; `History · 1 run` en singular) y un grupo por turno terminado, el más reciente primero, separados por una fila en blanco, sin líneas (ver «Historial»). Vacío: `No finished turns yet`.
 
@@ -189,7 +190,7 @@ El historial tiene el mismo diseño con el turno como cabecera: `marca título` 
 
 ### Barras
 
-Hay **una sola barra por el agente principal y una por cada subagente activo, y ninguna más**: ni en las tareas del checklist, ni en los agentes terminados, ni en el historial, ni una del turno. Es la barra indeterminada de siempre (un bloque de 3 segmentos que se mueve con el temporizador, `bar(null, tick)`); **el radar nunca inventa porcentajes**. Va al final de la línea de estado del agente, no en una línea propia. Es azul mientras el agente trabaja y amarilla si te espera; al terminar (`Done`, `Failed` o `Stopped`) desaparece.
+Hay **una sola barra por el agente principal y una por cada subagente o tarea en segundo plano activos, y ninguna más**: ni en las tareas del checklist, ni en los agentes terminados, ni en el historial, ni una del turno. Es la barra indeterminada de siempre (un bloque de 3 segmentos que se mueve con el temporizador, `bar(null, tick)`); **el radar nunca inventa porcentajes**. Va al final de la línea de estado del agente, no en una línea propia. Es azul mientras el agente trabaja y amarilla si te espera; al terminar (`Done`, `Failed` o `Stopped`) desaparece.
 
 ### El ancho
 
@@ -243,10 +244,10 @@ El panel muestra los tokens de cada agente, los del turno en el encabezado y los
 
 ### Historial
 
-Un turno se **archiva** cuando el agente principal terminó (bien, con error o interrumpido) y no queda ningún subagente activo; al cancelarlo (`aborted`) se archiva de inmediato, aunque queden subagentes activos: pasan a `Stopped` con el turno. Se guarda en el estado (`turns`, hasta 10 turnos, el más reciente primero; el más viejo se descarta al pasar de 10) como un registro con:
+Un turno se **archiva** cuando el agente principal terminó (bien, con error o interrumpido) y no queda ningún subagente ni tarea en segundo plano activo; al cancelarlo (`aborted`) se archiva de inmediato, aunque queden subagentes o tareas activos: pasan a `Stopped` con el turno. Se guarda en el estado (`turns`, hasta 10 turnos, el más reciente primero; el más viejo se descarta al pasar de 10) como un registro con:
 
 - el **título** del turno y su **estado final**: `Done` si se respondió, `Stopped` si se canceló, `Failed` si terminó con un error o una negativa del modelo;
-- cuándo empezó y cuándo terminaron el agente principal y todos sus subagentes (la duración es la diferencia);
+- cuándo empezó y cuándo terminaron el agente principal, todos sus subagentes y sus tareas en segundo plano (la duración es la diferencia);
 - los **tokens** del turno (el total del principal y los subagentes);
 - el **agente principal**: modelo y esfuerzo, cuántas tareas del checklist se hicieron del total y sus tokens;
 - los **subagentes** del turno, en orden de inicio, cada uno con su estado final, duración, tokens y tarea.
@@ -255,7 +256,7 @@ El panel dibuja un grupo por turno, siempre abierto, con el mismo diseño vertic
 
 El historial **no usa el verde**: un turno o un agente terminado con éxito (`✓` y `Done`) se dibuja en el color normal del texto, y los demás colores se mantienen (rojo para `Failed`, naranja para `Stopped`). La ejecución actual conserva sus colores, incluido el verde de lo que trabaja.
 
-Si empieza un turno nuevo mientras el anterior sigue abierto (el principal ya terminó pero un subagente sigue activo), el anterior se archiva a la fuerza: los subagentes aún activos pasan a `Stopped` y el turno nuevo empieza vacío. Al terminar la sesión (`session.end`, también con `/clear`) se borra todo lo que el radar seguía, el historial incluido; solo se conserva la elección ON/OFF.
+Si empieza un turno nuevo mientras el anterior sigue abierto (el principal ya terminó pero un subagente sigue activo), el anterior se archiva a la fuerza: los subagentes aún activos pasan a `Stopped` y el turno nuevo empieza vacío; las tareas en segundo plano activas no se archivan: siguen en el turno nuevo. Al terminar la sesión (`session.end`, también con `/clear`) se borra todo lo que el radar seguía, el historial incluido; solo se conserva la elección ON/OFF.
 
 ## Botón ON/OFF
 
