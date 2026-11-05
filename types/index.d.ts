@@ -40,7 +40,7 @@ export type SubagentState = {
   finishedAt: number | null
 }
 
-/** A long command the main agent left running in the background, followed until its notification (or the end of the turn) says how it ended. */
+/** A long command an agent left running in the background, followed until its notification (or the end of the turn) says how it ended. */
 export type BackgroundTaskState = {
   /** The `backgroundTaskId` the engine gives the command; the same id comes back in its notification. */
   id: string
@@ -49,6 +49,8 @@ export type BackgroundTaskState = {
   status: BackgroundStatus
   /** Set when the task dies with the final response, so no notification will follow. */
   endsWithTurn?: true
+  /** The `agentId` of the subagent that started it; absent when the main agent did. */
+  ownerId?: string
   startedAt: number
   finishedAt: number | null
 }

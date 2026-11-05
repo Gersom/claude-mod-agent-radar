@@ -12,6 +12,7 @@ import {
   askUser,
   buttonLabel,
   didRun,
+  endBoundBackground,
   finishBackground,
   finishSubagent,
   finishTurn,
@@ -171,6 +172,29 @@ const rememberEarly = (id: string, info: ModelInfo, tokens: number) => {
 
 /** Whether the radar follows this agent: the main one always, a subagent once its spawn is listed. */
 const isFollowed = (state: ClaudeRadarState, id: string | undefined) => id === undefined || Object.prototype.hasOwnProperty.call(state.subagents, id)
+
+/** Follows the background task a Bash call left running (its result names it), for the main agent or, with `ownerId`, for the subagent that ran it; a call that left none changes nothing. */
+const trackBackground = async ($: EngineInterface, e: { description?: string }, ran: { result?: unknown }, ownerId?: string) => {
+  const result = ran.result as { backgroundTaskId?: unknown; backgroundEndsWithFinalResponse?: unknown } | null | undefined
+  const id = result?.backgroundTaskId
+
+  if (typeof id !== 'string' || id === '') return
+
+  const time = await $.clock.now()
+  const endsWithTurn = result?.backgroundEndsWithFinalResponse === true
+
+  await change($, state => startBackground(state, { id, name: e.description ?? '', endsWithTurn, ownerId }, time))
+  await start($)
+}
+
+/** Ends the background task a TaskStop call stopped, whoever started it; one not followed changes nothing. */
+const untrackBackground = async ($: EngineInterface, id: string | undefined) => {
+  if (id === undefined) return
+
+  const time = await $.clock.now()
+
+  await change($, state => settleTurn(finishBackground(state, id, 'killed', time), time))
+}
 
 /** The one restore of the saved choice per load of the module (a reload starts it over); shared, so no draw reads the flag before it ends. */
 let restoring: Promise<void> | null = null
@@ -452,7 +476,8 @@ export const register: Register = on => {
       // A subagent's turn ends that subagent, never the main one; an agent not followed changes nothing.
       const id = e.agentId
 
-      await change($, state => settleTurn(finishSubagent(state, id, e.reason, time), time))
+      // The background tasks it started that die with its final response end with it.
+      await change($, state => settleTurn(endBoundBackground(finishSubagent(state, id, e.reason, time), time, id), time))
     }
 
     return next(e)
@@ -483,7 +508,15 @@ export const register: Register = on => {
 
       await change($, state => workSubagent(state, id, activity))
 
-      return next(e)
+      const ran = await next(e)
+
+      // A task it left running belongs to the turn, whether or not the radar follows the subagent itself.
+      if (didRun(ran)) {
+        if (e.tool === 'Bash') await trackBackground($, e, ran, id)
+        else if (e.tool === 'TaskStop') await untrackBackground($, e.task_id ?? e.shell_id)
+      }
+
+      return ran
     }
 
     const ran = await next(e)
@@ -502,25 +535,10 @@ export const register: Register = on => {
         await change($, state => updateTask(state, e.taskId, { status: e.status, subject: e.subject }))
       } else if (e.tool === 'Bash') {
         // A command left running in the background: followed until its notification says how it ended.
-        const result = ran.result as { backgroundTaskId?: unknown; backgroundEndsWithFinalResponse?: unknown } | null | undefined
-        const id = result?.backgroundTaskId
-
-        if (typeof id === 'string' && id !== '') {
-          const time = await $.clock.now()
-          const endsWithTurn = result?.backgroundEndsWithFinalResponse === true
-
-          await change($, state => startBackground(state, { id, name: e.description ?? '', endsWithTurn }, time))
-          await start($)
-        }
+        await trackBackground($, e, ran)
       } else if (e.tool === 'TaskStop') {
-        // A task stopped by the model ends here; one not followed changes nothing.
-        const id = e.task_id ?? e.shell_id
-
-        if (id !== undefined) {
-          const time = await $.clock.now()
-
-          await change($, state => settleTurn(finishBackground(state, id, 'killed', time), time))
-        }
+        // A task stopped by the model ends here.
+        await untrackBackground($, e.task_id ?? e.shell_id)
       }
     }
 

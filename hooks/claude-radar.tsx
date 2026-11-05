@@ -445,11 +445,12 @@ export const activeCount = (subagents: Subagents) => Object.values(subagents).fi
 
 type Background = NonNullable<ClaudeRadarState['background']>
 
-/** What the main agent's call tells about the background task it started. */
+/** What the call tells about the background task it started; `ownerId` is the subagent that started it, absent for the main agent. */
 export type BackgroundStart = {
   id: string
   name: string
   endsWithTurn?: boolean
+  ownerId?: string
 }
 
 /** Whether the radar follows this background task; ids are keys, so inherited names do not count. */
@@ -474,6 +475,8 @@ export const startBackground = (state: ClaudeRadarState, start: BackgroundStart,
 
   if (start.endsWithTurn) task.endsWithTurn = true
 
+  if (start.ownerId !== undefined) task.ownerId = start.ownerId
+
   return { ...state, background: { ...background, [start.id]: task } }
 }
 
@@ -492,16 +495,17 @@ export const finishBackground = (state: ClaudeRadarState, id: string, word: stri
 export const backgroundActiveCount = (background: Background | undefined) =>
   Object.values(background ?? {}).filter(task => isBackgroundActive(task.status)).length
 
-/** The end of the turn stops the background tasks that die with it (no notification will follow); the others go on. */
-export const endBoundBackground = (state: ClaudeRadarState, now: number): ClaudeRadarState => {
+/** The end of an agent's turn (the main agent's without `ownerId`) stops the background tasks it started that die with it (no notification will follow); the others go on. */
+export const endBoundBackground = (state: ClaudeRadarState, now: number, ownerId?: string): ClaudeRadarState => {
   const background = state.background ?? {}
+  const isEnded = (task: BackgroundTaskState) => task.endsWithTurn === true && task.ownerId === ownerId && isBackgroundActive(task.status)
 
-  if (!Object.values(background).some(task => task.endsWithTurn && isBackgroundActive(task.status))) return state
+  if (!Object.values(background).some(isEnded)) return state
 
   const ended = Object.fromEntries(
     Object.entries(background).map(([id, task]): [string, BackgroundTaskState] => [
       id,
-      task.endsWithTurn && isBackgroundActive(task.status) ? { ...task, status: 'stopped', finishedAt: now } : task
+      isEnded(task) ? { ...task, status: 'stopped', finishedAt: now } : task
     ])
   )
 
@@ -712,22 +716,22 @@ const paneAgentOf = (agent: SubagentState, now: number, depth: number, tick: num
 const paneAgentsOf = (subagents: Subagents, now: number, tick: number, t: Texts) =>
   orderedSubagents(subagents).map(({ agent, depth }) => paneAgentOf(agent, now, depth, tick, t))
 
-/** The pane's row of a background task, as a subagent's but with no model, tasks or tokens. */
-const paneBackgroundOf = (task: BackgroundTaskState, now: number, tick: number, t: Texts): PaneRow => ({
+/** The pane's row of a background task, as a subagent's but with no model, tasks or tokens; its detail is the name of the subagent that started it, when that one is known. */
+const paneBackgroundOf = (task: BackgroundTaskState, agents: SubagentState[], now: number, tick: number, t: Texts): PaneRow => ({
   id: task.id,
   ...looksOf(task.status, tick),
   status: task.status,
   name: task.name || t.backgroundFallback,
   time: elapsed((task.finishedAt ?? now) - task.startedAt),
   label: t.agent[task.status],
-  detail: null,
+  detail: (task.ownerId === undefined ? undefined : agents.find(agent => agent.id === task.ownerId)?.name) || null,
   tasks: null,
   tokens: null
 })
 
 /** The background tasks as pane rows, in start order. */
-const paneBackgroundsOf = (tasks: BackgroundTaskState[], now: number, tick: number, t: Texts) =>
-  [...tasks].sort((a, b) => a.startedAt - b.startedAt).map(task => paneBackgroundOf(task, now, tick, t))
+const paneBackgroundsOf = (tasks: BackgroundTaskState[], agents: SubagentState[], now: number, tick: number, t: Texts) =>
+  [...tasks].sort((a, b) => a.startedAt - b.startedAt).map(task => paneBackgroundOf(task, agents, now, tick, t))
 
 /** The main agent's row: `status` is where it stands, `time` how long it has gone. */
 const paneLeaderOf = (
@@ -807,7 +811,7 @@ const currentOf = (state: ClaudeRadarState, now: number, tick: number, t: Texts)
     ),
     tasks: rowsOf(checklist, t),
     agents: paneAgentsOf(state.subagents, now, tick, t),
-    background: paneBackgroundsOf(background, now, tick, t),
+    background: paneBackgroundsOf(background, agents, now, tick, t),
     active: activeCount(state.subagents)
   }
 }
@@ -834,7 +838,7 @@ const turnOf = (turn: TurnRecord, now: number, tick: number, t: Texts): PaneTurn
       t
     ),
     agents: paneAgentsOf(Object.fromEntries(turn.agents.map(agent => [agent.id, agent])), now, tick, t),
-    background: paneBackgroundsOf(turn.background ?? [], now, tick, t)
+    background: paneBackgroundsOf(turn.background ?? [], turn.agents, now, tick, t)
   }
 }
 

@@ -3959,14 +3959,13 @@ test('the task is named by the description of the call alone, never by its comma
   expect(box.state.subagents).toEqual({})
 })
 
-test("a Bash call that stays in the foreground, fails, is refused or is not the main agent's adds no background task", async ($, on) => {
+test('a Bash call that stays in the foreground, fails or is refused adds no background task', async ($, on) => {
   jobs(on, {
     'npm run build': answered({ stdout: 'built', interrupted: false }),
     'echo none': left(''),
     'echo number': left(7),
     'echo failed': { ...(left('b1') as object), isError: true },
     'echo denied': { deny: 'no' },
-    'echo sub': left('b3'),
     '': left('b4')
   })
 
@@ -3978,8 +3977,6 @@ test("a Bash call that stays in the foreground, fails, is refused or is not the 
   await bash($, 'echo number')
   await bash($, 'echo failed')
   await bash($, 'echo denied')
-  // A subagent's command is its own: the radar does not follow it.
-  await bash($, 'echo sub', undefined, { agentId: 'a1' })
   // Only Bash leaves a command running in the background.
   await $.tool.call({ tool: 'Read', file_path: 'x' } as never)
 
@@ -3989,6 +3986,56 @@ test("a Bash call that stays in the foreground, fails, is refused or is not the 
 
   expect(await ui.find({ type: 'Text', text: /Background tasks/ })).toBeUndefined()
   await ui.unmount()
+})
+
+test('a task a subagent started is kept with its owner, and an ownerless start keeps the field out', async () => {
+  const state = tasked(initialState(), 'b1', 'x', 0, { ownerId: 'a1' })
+
+  expect(state.background?.['b1']).toEqual({ id: 'b1', name: 'X', status: 'working', ownerId: 'a1', startedAt: 0, finishedAt: null })
+  expect(tasked(initialState(), 'b1').background?.['b1']).not.toHaveProperty('ownerId')
+})
+
+test('the end of an agent stops only the tasks it started that end with its turn: the main one the ownerless, a subagent its own', async () => {
+  let state = startTurn(initialState(), 'go', 0)
+
+  state = tasked(state, 'b1', 'main', 10, { endsWithTurn: true })
+  state = tasked(state, 'b2', 'sub', 20, { endsWithTurn: true, ownerId: 'a1' })
+  state = tasked(state, 'b3', 'other', 30, { endsWithTurn: true, ownerId: 'a2' })
+  state = tasked(state, 'b4', 'free', 40, { ownerId: 'a1' })
+
+  const bySub = endBoundBackground(state, 1000, 'a1')
+
+  expect(bySub.background?.['b2']).toMatchObject({ status: 'stopped', finishedAt: 1000 })
+  expect(['b1', 'b3', 'b4'].map(id => bySub.background?.[id]?.status)).toEqual(['working', 'working', 'working'])
+
+  const byMain = endBoundBackground(state, 1000)
+
+  expect(byMain.background?.['b1']).toMatchObject({ status: 'stopped', finishedAt: 1000 })
+  expect(['b2', 'b3', 'b4'].map(id => byMain.background?.[id]?.status)).toEqual(['working', 'working', 'working'])
+  // The main agent's turn ending is not a subagent's.
+  expect(finishTurn(state, 'answer', 1000).background?.['b2']?.status).toBe('working')
+  // Nothing of that owner to stop: the very same state.
+  expect(endBoundBackground(state, 1000, 'a9')).toBe(state)
+  expect(endBoundBackground(bySub, 1000, 'a1')).toBe(bySub)
+})
+
+test('the row of a task a subagent started names that subagent as its detail, in the run and in the history; with no known owner there is none', async () => {
+  const base = spawnSubagent(startTurn(initialState(), 'go', 0), { id: 'a1', name: 'executor', task: 'Build', model: 'm' }, 5)
+  const owned = (ownerId: string) => tasked(base, 'b1', 'Gradle build', 10, { ownerId })
+
+  expect(tasksOf(owned('a1')).map(row => row.detail)).toEqual(['executor'])
+  // An owner the radar does not follow, and a task of the main agent: no detail.
+  expect(tasksOf(owned('ghost')).map(row => row.detail)).toEqual([null])
+  expect(tasksOf(tasked(base, 'b1')).map(row => row.detail)).toEqual([null])
+
+  // The archived turn keeps its agents: the name stays in the history.
+  const ended = finishSubagent(finishBackground(owned('a1'), 'b1', 'completed', 50), 'a1', 'answer', 60)
+
+  expect(paneOf(settleTurn(finishTurn(ended, 'answer', 70), 70), 99, 0, en).turns[0]?.background.map(row => row.detail)).toEqual(['executor'])
+
+  const unknown = finishBackground(owned('ghost'), 'b1', 'completed', 50)
+
+  expect(paneOf(forceArchive(unknown, 70), 99, 0, en).turns[0]?.background.map(row => row.detail)).toEqual([null])
 })
 
 test('a notification of the task closes it, archives the turn once the main agent ended, and the task is in the history row', async ($, on) => {
@@ -4181,7 +4228,7 @@ test('the notification goes on as it came: the same text and origin reach the bo
   expect(clock.prompts[1]).toMatchObject({ text: 'Build it', origin: { kind: 'composer' } })
 })
 
-/** A TaskStop call of the main agent. */
+/** A TaskStop call of the main agent (or of the agent `extra.agentId` names). */
 const stopTask = ($: any, extra: object) => $.tool.call({ tool: 'TaskStop', ...extra } as never)
 
 test('TaskStop closes the task as Stopped and archives the turn once the main agent ended; an unknown id changes nothing', async ($, on) => {
@@ -4356,4 +4403,138 @@ test('with settings.language in Spanish the background tasks section and its cou
   expect(await archived.findAll({ type: 'Text', text: /^Falló$/ })).toHaveLength(1)
   expect(await archived.find({ type: 'Text', text: /^Comando en segundo plano$/ })).toBeDefined()
   await archived.unmount()
+})
+
+/** The bottom for background tasks plus a spawn that gives each run the next of the ids. */
+const delegated = (on: any, answers: Record<string, unknown>, ...ids: string[]) => {
+  const clock = jobs(on, answers)
+
+  on('agent.spawn', () => ({ model: 'm', agentId: ids.shift() }))
+
+  return clock
+}
+
+test("a Bash call of a subagent left in the background shows in the pane with the subagent's name and keeps the turn open after the subagent ends", async ($, on) => {
+  const answer = left('b1')
+
+  delegated(on, { 'gradle build': answer }, 'a1')
+
+  const box = track(on)
+
+  await begin($)
+  await spawn($, 'executor', 'Building the app')
+
+  // The call goes through as it came.
+  expect(await bash($, 'gradle build', 'Gradle build', { agentId: 'a1' })).toEqual(answer)
+  expect(box.state.background?.['b1']).toMatchObject({ id: 'b1', name: 'Gradle build', status: 'working', ownerId: 'a1' })
+  expect(box.state.checklist.tasks).toEqual([])
+
+  const ui = await mount($)
+
+  expect(blockOf(await paneLines(ui), /^Background tasks/, 3)).toEqual(['Background tasks · 1 active', '  ● Gradle build · executor', '    Working · 0s  ███░░░░░░░'])
+  await ui.unmount()
+
+  // The main agent and the subagent end, the task at work keeps the turn open.
+  await finish($)
+  await finish($, 'answer', 'a1')
+  expect(box.state.turns).toEqual([])
+  expect(box.state.background?.['b1']?.status).toBe('working')
+})
+
+test("the notification of a subagent's task closes it and archives the turn once the main agent and the subagent ended", async ($, on) => {
+  delegated(on, { 'gradle build': left('b1') }, 'a1')
+
+  const box = track(on)
+
+  await begin($)
+  await spawn($, 'executor')
+  await bash($, 'gradle build', 'Gradle build', { agentId: 'a1' })
+  await finish($, 'answer', 'a1')
+  await finish($)
+  expect(box.state.turns).toEqual([])
+
+  await notice($, 'b1')
+  expect(box.state.turns).toHaveLength(1)
+  expect(box.state.turns[0]?.background).toEqual([expect.objectContaining({ id: 'b1', status: 'done', ownerId: 'a1' })])
+  expect(box.state.background).toEqual({})
+  expect(paneOf(box.state, 99, 0).turns[0]?.background.map(row => [row.name, row.detail])).toEqual([['Gradle build', 'executor']])
+})
+
+test('a task of a subagent that ends with the final response is Stopped when that subagent ends, not when the main turn does while the subagent goes on', async ($, on) => {
+  delegated(on, { bound: left('b1', { backgroundEndsWithFinalResponse: true }), mainBound: left('b2', { backgroundEndsWithFinalResponse: true }) }, 'a1')
+
+  const box = track(on)
+
+  await begin($)
+  await spawn($, 'executor')
+  await bash($, 'bound', 'Bound one', { agentId: 'a1' })
+  await bash($, 'mainBound', 'Main one')
+
+  // The main turn ends: its own task is over, the subagent's goes on with the subagent.
+  await finish($)
+  expect(box.state.background?.['b2']?.status).toBe('stopped')
+  expect(box.state.background?.['b1']).toMatchObject({ status: 'working', ownerId: 'a1' })
+  expect(box.state.turns).toEqual([])
+
+  await finish($, 'answer', 'a1')
+  expect(box.state.turns).toHaveLength(1)
+  expect(box.state.turns[0]?.background?.map(task => [task.id, task.status])).toEqual([
+    ['b1', 'stopped'],
+    ['b2', 'stopped']
+  ])
+})
+
+test('a task of a subagent the radar does not follow is still followed, with no owner name to show', async ($, on) => {
+  delegated(on, { 'gradle build': left('b1') })
+
+  const box = track(on)
+
+  await begin($)
+  await bash($, 'gradle build', 'Gradle build', { agentId: 'ghost' })
+  expect(box.state.background?.['b1']).toMatchObject({ status: 'working', ownerId: 'ghost' })
+  expect(box.state.subagents).toEqual({})
+
+  const ui = await mount($)
+
+  expect(blockOf(await paneLines(ui), /^Background tasks/, 2)).toEqual(['Background tasks · 1 active', '  ● Gradle build'])
+  await ui.unmount()
+  await finish($)
+  expect(box.state.turns).toEqual([])
+  await notice($, 'b1')
+  expect(box.state.turns).toHaveLength(1)
+})
+
+test('a Bash call of a subagent with no background task, failed or refused adds nothing, and the call goes through', async ($, on) => {
+  const plain = answered({ stdout: 'built', interrupted: false })
+
+  delegated(on, { plain, none: left(''), failed: { ...(left('b1') as object), isError: true }, denied: { deny: 'no' } }, 'a1')
+
+  const box = track(on)
+
+  await begin($)
+  await spawn($, 'executor')
+  expect(await bash($, 'plain', undefined, { agentId: 'a1' })).toEqual(plain)
+  await bash($, 'none', undefined, { agentId: 'a1' })
+  await bash($, 'failed', undefined, { agentId: 'a1' })
+  await bash($, 'denied', undefined, { agentId: 'a1' })
+  expect(box.state.background).toEqual({})
+})
+
+test('TaskStop of a subagent closes the task as Stopped; an unknown id changes nothing', async ($, on) => {
+  delegated(on, { 'gradle build': left('b1') }, 'a1')
+
+  const box = track(on)
+
+  await begin($)
+  await spawn($, 'executor')
+  await bash($, 'gradle build', 'Gradle build', { agentId: 'a1' })
+
+  const before = box.state
+
+  await stopTask($, { task_id: 'zzz', agentId: 'a1' })
+  await stopTask($, { agentId: 'a1' })
+  expect(box.state).toEqual(before)
+
+  await stopTask($, { task_id: 'b1', agentId: 'a1' })
+  expect(box.state.background?.['b1']).toMatchObject({ status: 'stopped', ownerId: 'a1' })
 })
